@@ -6,7 +6,6 @@ import sys
 from typing import Dict, List
 from tqdm import tqdm
 from config import (
-    COVERLETTER_FOLDER,
     CV_FOLDER,
     MODEL_NAME,
     OUTPUT_COVERLETTER_BASENAME,
@@ -19,76 +18,68 @@ from profile_manager import select_optimal_cv_file
 from utils import compile_latex_to_pdf, extract_text_from_file, get_job_description
 
 
-def select_optimal_coverletter_file(
-    folder_path: str, job_description: str
-) -> str:
-  """Finds cover letter templates, presents options, and allows interactive user selection."""
-  print(f"[Step 3.1] Searching for Cover Letter templates in: {folder_path}")
-  target_folder = (
-      folder_path
-      if os.path.exists(folder_path) and os.listdir(folder_path)
-      else CV_FOLDER
+def extract_contact_info_from_cv(cv_text: str) -> Dict[str, str]:
+  """Parses contact metadata dynamically from CV text with reliable fallback defaults."""
+  info = {
+      "name": "Sat Naing Tun",
+      "email": "",
+      "phone": "",
+      "location": "",
+      "linkedin": "",
+      "github": "",
+  }
+
+  lines = [line.strip() for line in cv_text.splitlines() if line.strip()]
+  if lines:
+    first_line = lines[0]
+    if len(first_line) < 40 and not re.search(r"[@\d:]", first_line):
+      info["name"] = first_line
+
+  email_match = re.search(
+      r"[a-zA-Z0-9%._+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", cv_text
   )
+  if email_match:
+    info["email"] = email_match.group(0)
 
-  raw_files = glob.glob(os.path.join(target_folder, "*.tex")) + glob.glob(
-      os.path.join(target_folder, "*.pdf")
+  phone_match = re.search(
+      r"(\+?\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{3,4}", cv_text
   )
+  if phone_match:
+    info["phone"] = phone_match.group(0).strip()
 
-  cl_files = [
-      f
-      for f in raw_files
-      if "coverletter" in os.path.basename(f).lower()
-      or "cover_letter" in os.path.basename(f).lower()
-  ]
-  candidate_files = cl_files if cl_files else raw_files
-
-  if not candidate_files:
-    raise FileNotFoundError(
-        f"No .tex or .pdf cover letter templates found in {target_folder}"
+  linkedin_match = re.search(
+      r"(?:https?://)?(?:www\.)?linkedin\.com/in/([a-zA-Z0-9_-]+)",
+      cv_text,
+      re.IGNORECASE,
+  )
+  if linkedin_match:
+    info["linkedin"] = (
+        f"https://linkedin.com/in/{linkedin_match.group(1).strip()}"
     )
 
-  filenames = [os.path.basename(f) for f in candidate_files]
-  file_map = {os.path.basename(f): f for f in candidate_files}
+  github_match = re.search(
+      r"(?:https?://)?(?:www\.)?github\.com/([a-zA-Z0-9_-]+)",
+      cv_text,
+      re.IGNORECASE,
+  )
+  if github_match:
+    info["github"] = f"https://github.com/{github_match.group(1).strip()}"
 
-  print(f"\n[Step 3.2] Found {len(filenames)} candidate template(s):")
-  for idx, fname in enumerate(filenames, 1):
-    print(f"  {idx:2d}. {fname}")
+  loc_match = re.search(
+      r"([A-Z][a-zA-L\s]+,\s*(?:Thailand|Myanmar|USA|UK|Singapore|Germany|Japan|Canada))",
+      cv_text,
+  )
+  if loc_match:
+    info["location"] = loc_match.group(0).strip()
 
-  print(f"\nDefault selected template: [{filenames[0]}]")
-  user_choice = input(
-      f"Press [ENTER] to use default template, or enter number (1-"
-      f"{len(filenames)}) / filename to override: "
-  ).strip()
-
-  if not user_choice:
-    selected = file_map[filenames[0]]
-  elif user_choice.isdigit() and 1 <= int(user_choice) <= len(filenames):
-    selected = file_map[filenames[int(user_choice) - 1]]
-  elif user_choice in file_map:
-    selected = file_map[user_choice]
-  else:
-    matching = [
-        fpath
-        for fname, fpath in file_map.items()
-        if user_choice.lower() in fname.lower()
-    ]
-    if matching:
-      selected = matching[0]
-    else:
-      print(f"[!] Input unrecognized. Defaulting to template: {filenames[0]}")
-      selected = file_map[filenames[0]]
-
-  print(f"[Step 3.3] Selected Template: {os.path.basename(selected)}")
-  return selected
+  return info
 
 
 def clean_coverletter_prose(text: str) -> str:
-  """Strips conversational preambles, section headers, bullet lists, and placeholder tags."""
-  # 1. Remove markdown code blocks
+  """Strips conversational preambles, section headers, bullet lists, and placeholders."""
   text = re.sub(r"^```(?:latex)?\n?", "", text, flags=re.IGNORECASE)
   text = re.sub(r"\n?```$", "", text).strip()
 
-  # 2. Remove conversational intro chatter (e.g., "Okay, here's...", "Here is...")
   text = re.sub(
       r"^(?:Okay|Sure|Certainly|Here\s+is|Here\'s|Below\s+is|This\s+is)[^:]*:\s*",
       "",
@@ -96,14 +87,12 @@ def clean_coverletter_prose(text: str) -> str:
       flags=re.IGNORECASE,
   )
 
-  # 3. Strip surrounding quotes if wrapped
   text = text.strip()
   if (text.startswith('"') and text.endswith('"')) or (
       text.startswith("'") and text.endswith("'")
   ):
     text = text[1:-1].strip()
 
-  # 4. Remove section headers, bullet point tags, and titles
   text = re.sub(
       r"^\s*(?:Core Competencies|Key Qualifications|Skills|Paragraph\s*\d+):?\s*",
       "",
@@ -116,7 +105,6 @@ def clean_coverletter_prose(text: str) -> str:
   text = re.sub(r"^\s*[\bullet•\-\*]\s*", "", text, flags=re.MULTILINE)
   text = re.sub(r"^\s*\\item\s*", "", text, flags=re.MULTILINE)
 
-  # 5. Remove bracketed placeholders like [mention ...] or [Platform ...]
   text = re.sub(
       r",?\s*particularly in\s*\[\s*mention\s+[^\]]*\]",
       "",
@@ -133,7 +121,6 @@ def clean_coverletter_prose(text: str) -> str:
       r"\[\s*.*?platform.*?\s*\]", "", text, flags=re.IGNORECASE
   )
 
-  # 6. Clean up spacing and punctuation
   text = re.sub(r"\s{2,}", " ", text)
   text = re.sub(r"\s+\.", ".", text)
   text = re.sub(r"\s+,", ",", text)
@@ -145,48 +132,47 @@ def clean_coverletter_prose(text: str) -> str:
 def build_single_page_coverletter_latex(
     candidate_cv_text: str, job_info: Dict[str, str]
 ) -> str:
-  """Generates 3 distinct cover letter paragraphs using a tqdm loop, then formats them into LaTeX."""
-  print("\n[Step 5.2] Generating cover letter paragraphs...")
+  """Generates 3 distinct non-repetitive paragraphs and formats them into clean LaTeX."""
+  contact = extract_contact_info_from_cv(candidate_cv_text)
 
   company_str = job_info.get("company_name", "your organization")
   if company_str.lower() in ["unknown", "n/a", "none"]:
     company_str = "your organization"
 
   skills_str = ", ".join(job_info.get("required_skills", []))
-  job_title = job_info.get("job_title", "System Analyst")
+  job_title = job_info.get("job_title", "Position")
 
   paragraph_tasks = [
       (
           "Opening Paragraph",
           (
-              f"Write a sincere 2-3 sentence opening paragraph expressing strong"
-              f" enthusiasm for the {job_title} role at {company_str}."
-              " Introduce your current background as a Master's student in IoT"
-              " Engineering at AIT and past IT Administrator experience."
+              f"Write a 2-3 sentence opening paragraph expressing strong"
+              f" enthusiasm for the {job_title} role at {company_str}. Introduce"
+              " candidate's educational background and key technical profile"
+              " based on CV."
           ),
       ),
       (
           "Experience Alignment Paragraph",
           (
-              "Write a single 3-4 sentence body paragraph connecting your"
-              " Master's degree from AIT and IT experience at Best Oil Company"
-              f" directly to position requirements: {skills_str}. Do NOT write"
-              " bullet points or headers."
+              "Write a single 3-4 sentence body paragraph connecting candidate's"
+              " academic projects and operational experience directly to"
+              f" requirements: {skills_str}. Do NOT write bullet points or"
+              " repeat intro statements."
           ),
       ),
       (
           "Value & Closing Paragraph",
           (
-              "Write a 2-3 sentence closing paragraph highlighting your"
-              " analytical problem-solving skills, teamwork, and a confident"
-              " call-to-action requesting an interview."
+              "Write a 2-3 sentence closing paragraph highlighting problem-solving"
+              " ability, collaboration, and a confident interview request."
+              " Do NOT repeat any previous sentences."
           ),
       ),
   ]
 
   generated_paras = []
 
-  # Iterating with tqdm over the list of paragraph tasks (leave=False hides the bar after completion)
   for title, prompt_desc in tqdm(
       paragraph_tasks,
       desc="[Step 5.2] Processing Paragraphs",
@@ -195,11 +181,11 @@ def build_single_page_coverletter_latex(
   ):
     system_prompt = (
         "CRITICAL INSTRUCTIONS:\n"
-        "1. Output ONLY the raw prose paragraph text. Start directly with the first word.\n"
-        "2. Absolutely NO conversational preambles (do NOT say 'Okay, here is...', 'Sure, here is...').\n"
-        "3. Absolutely NO bullet points, NO lists, NO section titles (e.g. 'Core Competencies'), and NO quotation marks.\n"
-        "4. Absolutely NO bracketed placeholders (e.g., do NOT write '[mention a project]').\n"
-        "5. Ground all experience strictly in candidate CV facts."
+        "1. Output ONLY raw prose paragraph text. Start directly with the first word.\n"
+        "2. NO conversational preambles ('Okay, here is...').\n"
+        "3. NO repeated summary sentences from earlier paragraphs.\n"
+        "4. NO bullet points, NO section headers, NO quotation marks, NO placeholders.\n"
+        "5. Ground strictly in candidate CV facts."
     )
     user_prompt = f"""=== CANDIDATE CV GROUND TRUTH ===
 {candidate_cv_text[:3000]}
@@ -235,6 +221,35 @@ Company: {company_str}
   body_2_para = generated_paras[1] if len(generated_paras) > 1 else ""
   body_3_para = generated_paras[2] if len(generated_paras) > 2 else ""
 
+  contact_line_1 = []
+  if contact.get("email"):
+    contact_line_1.append(
+        f"Email: \\href{{mailto:{contact['email']}}}{{{contact['email']}}}"
+    )
+  if contact.get("phone"):
+    contact_line_1.append(f"Phone: {contact['phone']}")
+
+  contact_line_2 = []
+  if contact.get("linkedin"):
+    clean_li = contact["linkedin"].replace("https://", "")
+    contact_line_2.append(f"LinkedIn: \\href{{{contact['linkedin']}}}{{{clean_li}}}")
+  if contact.get("github"):
+    clean_gh = contact["github"].replace("https://", "")
+    contact_line_2.append(f"GitHub: \\href{{{contact['github']}}}{{{clean_gh}}}")
+
+  line1_str = " \\,|\\, ".join(contact_line_1)
+  line2_str = " \\,|\\, ".join(contact_line_2)
+
+  header_lines = [f"{{\\Large \\textbf{{{contact['name']}}}}}\\"]
+  if contact.get("location"):
+    header_lines.append(f"{contact['location']} \\\\")
+  if line1_str:
+    header_lines.append(f"{line1_str} \\\\")
+  if line2_str:
+    header_lines.append(f"{line2_str}")
+
+  header_str = "\n".join(header_lines)
+
   latex_document = f"""\\documentclass[11pt,a4paper]{{article}}
 \\usepackage[utf8]{{inputenc}}
 \\usepackage[margin=0.75in]{{geometry}}
@@ -251,11 +266,8 @@ Company: {company_str}
 
 \\pagestyle{{empty}}
 
-% Header / Contact Info
-{{\\Large \\textbf{{Sat Naing Tun}}}} \\\\
-Bangkok, Thailand \\\\
-Email: \\href{{mailto:satnaingtun.snt@gmail.com}}{{satnaingtun.snt@gmail.com}} \\,|\\, Phone: +66 961540370 \\\\
-LinkedIn: \\href{{https://linkedin.com/in/satnaingtun}}{{linkedin.com/in/satnaingtun}} \\,|\\, GitHub: \\href{{https://github.com/SatNaingTun}}{{github.com/SatNaingTun}}
+% Header Block
+{header_str}
 
 \\vspace{{1.2em}}
 
@@ -283,7 +295,7 @@ Sincerely,
 
 \\vspace{{1.5em}}
 
-Sat Naing Tun
+{contact['name']}
 
 \\end{{document}}
 """
@@ -291,34 +303,28 @@ Sat Naing Tun
 
 
 def generate_tailored_coverletter(
-    template_path: str,
     raw_job_input: str,
     candidate_cv_text: str,
     output_path: str,
     pipeline_pbar: tqdm = None,
 ) -> str:
-  """Main execution pipeline: parses job info, constructs a single-page cover letter, writes LaTeX, and compiles to PDF."""
-  print(f"\n[Step 5] Initializing Cover Letter Generation...")
+  print(f"\n[Step 3] Initializing Cover Letter Generation...")
 
-  # Step 5.1: Parse/cache structured job details via LLM
-  print("[Step 5.1] Extracting structured details from job description...")
+  print("[Step 3.1] Extracting structured details from job description...")
   job_info = get_or_cache_job_description(raw_job_input)
 
-  # Step 5.2: Build clean multi-paragraph cover letter using tqdm loop
   final_tex = build_single_page_coverletter_latex(candidate_cv_text, job_info)
   if pipeline_pbar:
     pipeline_pbar.update(1)
 
-  # Step 5.3: Save LaTeX file
-  print(f"\n[Step 5.3] Saving tailored LaTeX file to: {output_path}")
+  print(f"\n[Step 3.2] Saving tailored LaTeX file to: {output_path}")
   output_dir = os.path.dirname(output_path)
   os.makedirs(output_dir, exist_ok=True)
   with open(output_path, "w", encoding="utf-8") as f:
     f.write(final_tex)
   print("[✓] LaTeX file written successfully.")
 
-  # Step 5.4: Compile LaTeX output into PDF
-  print(f"\n[Step 5.4] Compiling LaTeX to PDF in output directory: {output_dir}")
+  print(f"\n[Step 3.3] Compiling LaTeX to PDF in output directory: {output_dir}")
   compile_latex_to_pdf(output_path, output_dir)
   print("[✓] PDF Compilation step finished.")
   if pipeline_pbar:
@@ -328,7 +334,6 @@ def generate_tailored_coverletter(
 
 
 if __name__ == "__main__":
-  # Step 1: Prompt user for multi-line job description input
   print("=====================================================================")
   print("[Step 1] Reading Job Description input from terminal...")
   print("Enter Job Description (URL, file path, or paste multi-line text).")
@@ -340,14 +345,12 @@ if __name__ == "__main__":
     print("[!] No job description provided. Exiting.")
     exit(1)
 
-  # Overall Pipeline Progress Bar with leave=False
   with tqdm(
-      total=5,
+      total=4,
       desc="Overall Generation Pipeline",
       unit="stage",
       leave=False,
   ) as pipeline_pbar:
-    # Step 1: Parsing input text
     raw_job_text = get_job_description(user_input)
     print(
         f"\n[✓] Extracted {len(raw_job_text)} characters of job description"
@@ -355,7 +358,6 @@ if __name__ == "__main__":
     )
     pipeline_pbar.update(1)
 
-    # Step 2: Locating and reading candidate CV
     print("\n[Step 2] Locating candidate CV in CV_FOLDER...")
     candidate_cv_file = select_optimal_cv_file(CV_FOLDER, raw_job_text)
     candidate_cv_text = extract_text_from_file(candidate_cv_file)
@@ -365,14 +367,6 @@ if __name__ == "__main__":
     )
     pipeline_pbar.update(1)
 
-    # Step 3: Interactive cover letter template selection
-    print("\n[Step 3] Cover Letter Template Selection...")
-    selected_coverletter_template = select_optimal_coverletter_file(
-        COVERLETTER_FOLDER, raw_job_text
-    )
-    pipeline_pbar.update(1)
-
-    # Step 4 & 5: Generate output and compile PDF
     base_filename = (
         os.path.splitext(OUTPUT_COVERLETTER_BASENAME)[0]
         if OUTPUT_COVERLETTER_BASENAME.endswith(".tex")
@@ -381,7 +375,6 @@ if __name__ == "__main__":
     output_tex_file = os.path.join(OUTPUT_FOLDER, f"{base_filename}.tex")
 
     generate_tailored_coverletter(
-        selected_coverletter_template,
         raw_job_text,
         candidate_cv_text,
         output_tex_file,
