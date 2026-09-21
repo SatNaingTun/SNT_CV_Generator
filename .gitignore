@@ -1,0 +1,158 @@
+# ==========================================
+# Python
+# ==========================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.Here is a standard `.gitignore` file tailored for projects combining Python scripts and LaTeX documents:
+
+```gitignore
+# ==========================================
+# Python
+# ==========================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing & Linting
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+
+# ==========================================
+# LaTeX
+# ==========================================
+# Core build auxiliary files
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.synctex(busy)
+
+# Bibliography / References
+*.bbl
+*.bcf
+*.blg
+*.run.xml
+
+# Indexing & Nomenclature
+*.idx
+*.ilg
+*.ind
+*.ist
+*.nlo
+*.nls
+*.glo
+*.gls
+*.glg
+
+# Figures & Temporary Graphics
+*.dpth
+*.figlist
+*.makefile
+
+# Presentations (Beamer / Marp)
+*.nav
+*.snm
+*.vrb
+
+# Output PDFs
+# Keep commented out if you want to track final PDFs in Git.
+# Uncomment the line below to ignore generated PDFs:
+# *.pdf
+
+
+# ==========================================
+# Editors & IDEs
+# ==========================================
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# PyCharm / IntelliJ
+.idea/
+
+# Vim
+*.swp
+*.swo
+
+
+# ==========================================
+# OS & System Files
+# ==========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+output/*
