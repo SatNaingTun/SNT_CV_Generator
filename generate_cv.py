@@ -696,13 +696,23 @@ JSON Format:
     }
 
 
-def generate_nus_cover_letter(
+def generate_cover_letter(
     candidate_data: Dict[str, Union[str, list]],
     job_description: str,
+    style: str = "nus",
     output_dir: str = OUTPUT_DIR,
     compile_pdf: bool = True,
 ) -> str:
-  """Generates an NUS-standard cover letter strictly using pre-extracted candidate_data."""
+  """Generates a Cover Letter in either 'nus' (Academic/Research) or 'standard' (Corporate/Industry) format.
+
+  Args:
+      candidate_data: Pre-extracted candidate details.
+      job_description: Target job description text.
+      style: 'nus' for NUS Academic/Research style or 'standard' for Corporate
+        style.
+      output_dir: Destination folder for .tex and .pdf.
+      compile_pdf: Whether to execute pdflatex.
+  """
   os.makedirs(output_dir, exist_ok=True)
 
   # 1. Extract job metadata
@@ -715,9 +725,12 @@ def generate_nus_cover_letter(
   else:
     salutation = "Dear Hiring Manager,"
 
-  # 2. Generate 4 formal NUS body paragraphs
+  # Determine sign-off based on chosen style
+  sign_off = "Yours sincerely," if style.lower() == "nus" else "Sincerely,"
+
+  # 2. Strict LLM Prompt with direct opening sentence rule
   body_prompt = f"""
-Write EXACTLY 4 formal body paragraphs following NUS Cover Letter Standards for applicant {candidate_data.get('full_name')}.
+Write EXACTLY 4 formal body paragraphs for a cover letter for applicant {candidate_data.get('full_name')}.
 
 === CANDIDATE DETAILS ===
 Name: {candidate_data.get('full_name')}
@@ -728,18 +741,24 @@ Aligned Qualifications: {candidate_data.get('aligned_context')}
 === TARGET POSITION & COMPANY ===
 Role: {job_meta.get('job_title')}
 Company: {job_meta.get('company_name')}
+Style Focus: {'Academic/Research & Engineering (NUS Standard)' if style.lower() == 'nus' else 'Corporate/Industry Technical Role'}
+
+=== MANDATORY OPENING RULE ===
+Paragraph 1 MUST START directly with a active first-person sentence:
+"I am writing to express my strong interest in applying for the {job_meta.get('job_title')} position at {job_meta.get('company_name')}."
+NEVER start in third-person like "The company is seeking..." or "Company X is looking for...".
 
 === CRITICAL CONSTRAINTS ===
-1. NEVER use bracketed placeholders like [Platform], [Company Name], [Your Phone], or [Insert Tool]. Write complete sentences using the real details provided above.
-2. DO NOT include greetings (e.g. 'Dear...'), headers, or subject lines.
+1. NEVER write bracketed placeholders like [Platform], [Company Name], [Your Phone], or [Insert Tool].
+2. DO NOT include greetings (e.g. 'Dear...'), headers, or subject lines in your output.
 3. DO NOT include sign-offs (e.g. 'Sincerely', 'Yours sincerely') or candidate name lines at the end.
 4. Output EXACTLY 4 body paragraphs separated by double newlines.
 
 === PARAGRAPH STRUCTURE ===
-- Paragraph 1: Express strong interest in the {job_meta.get('job_title')} position at {job_meta.get('company_name')} and state core value proposition.
-- Paragraph 2: Detail technical skills directly matching the job requirements.
-- Paragraph 3: Highlight achievements in software development, system analysis, or IT operations.
-- Paragraph 4: Reiterate enthusiasm, state availability for an interview via the contact details provided, and express gratitude.
+- Paragraph 1 (Opening): Start with the mandatory opening sentence above, then state core value proposition.
+- Paragraph 2 (Technical Qualifications): Highlight technical skills directly relevant to the role requirements.
+- Paragraph 3 (Project/Research Experience): Detail concrete achievements and practical problem-solving experience.
+- Paragraph 4 (Closing): Express enthusiasm, state interview availability via contact info, and thank the reader.
 """
 
   response = client.chat.completions.create(
@@ -762,8 +781,10 @@ Company: {job_meta.get('company_name')}
   # Sanitize special characters for LaTeX compilation
   final_latex_body = sanitize_latex_characters(cleaned_body)
 
-  # 3. Construct LaTeX document
-  latex_template = r"""\documentclass[11pt,a4paper]{article}
+  # 3. Select LaTeX Template based on style choice
+  if style.lower() == "nus":
+    # NUS Academic/Research Template
+    latex_template = r"""\documentclass[11pt,a4paper]{article}
 \usepackage[utf8]{inputenc}
 \usepackage[margin=1in]{geometry}
 \usepackage{hyperref}
@@ -808,13 +829,67 @@ __BODY_CONTENT__
 
 \vspace{1.5em}
 
-Yours sincerely, \\
+__SIGN_OFF__ \\
 \vspace{2.5em}
 
 \textbf{__APPLICANT_NAME__}
 
 \end{document}"""
 
+  else:
+    # Standard Corporate/Industry Template
+    latex_template = r"""\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{parskip}
+
+\hypersetup{colorlinks=true, linkcolor=black, urlcolor=blue}
+
+\begin{document}
+\pagestyle{empty}
+
+\begin{flushleft}
+{\Large \textbf{__APPLICANT_NAME__}} \\
+\vspace{0.2em}
+__APPLICANT_EMAIL__ \quad $\cdot$ \quad __APPLICANT_PHONE__ \quad $\cdot$ \quad __APPLICANT_LOCATION__ \\
+\href{__APPLICANT_LINKEDIN__}{LinkedIn} \quad $\cdot$ \quad \href{__APPLICANT_GITHUB__}{GitHub}
+\end{flushleft}
+
+\vspace{0.3em}
+\hrule width \textwidth height 0.5pt
+\vspace{1.0em}
+
+\today
+
+\vspace{1.0em}
+
+\begin{flushleft}
+\textbf{__RECIPIENT_NAME__} \\
+__RECIPIENT_TITLE__ \\
+__COMPANY_NAME__
+\end{flushleft}
+
+\vspace{1.0em}
+
+\textbf{Re: __JOB_TITLE__}
+
+\vspace{0.8em}
+
+__SALUTATION__
+
+__BODY_CONTENT__
+
+\vspace{1.2em}
+
+__SIGN_OFF__ \\
+\vspace{2.0em}
+
+\textbf{__APPLICANT_NAME__}
+
+\end{document}"""
+
+  # 4. Fill template strings
   latex_document = (
       latex_template.replace(
           "__APPLICANT_NAME__",
@@ -857,16 +932,21 @@ Yours sincerely, \\
           sanitize_latex_characters(job_meta.get("job_title", "")),
       )
       .replace("__SALUTATION__", sanitize_latex_characters(salutation))
+      .replace("__SIGN_OFF__", sign_off)
       .replace("__BODY_CONTENT__", final_latex_body)
   )
 
-  # 4. Save and Compile
-  tex_filepath = os.path.join(output_dir, "cover_letter.tex")
+  # 5. Save and Compile
+  filename = f"cover_letter_{style.lower()}.tex"
+  tex_filepath = os.path.join(output_dir, filename)
   ensure_parent_dir(tex_filepath)
+
   with open(tex_filepath, "w", encoding="utf-8") as f:
     f.write(latex_document)
 
-  print(f"[✓] Saved LaTeX Cover Letter to: {tex_filepath}")
+  print(
+      f"[✓] Saved [{style.upper()}] LaTeX Cover Letter to: {tex_filepath}"
+  )
 
   if compile_pdf:
     try:
@@ -879,7 +959,9 @@ Yours sincerely, \\
       subprocess.run(
           cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
       )
-      pdf_filepath = os.path.join(output_dir, "cover_letter.pdf")
+      pdf_filepath = os.path.join(
+          output_dir, f"cover_letter_{style.lower()}.pdf"
+      )
       print(f"[✓] Successfully compiled PDF to: {pdf_filepath}")
       return pdf_filepath
     except subprocess.CalledProcessError as e:
@@ -938,9 +1020,10 @@ def main():
   candidate_data = extract_candidate_metadata_and_context(
         selected_cv_path, job_description
     )
-  
-  generate_nus_cover_letter(
-        candidate_data=candidate_data, job_description=job_description
+
+  CHOSEN_STYLE = "standard"
+  generate_cover_letter(
+        candidate_data=candidate_data, job_description=job_description,style=CHOSEN_STYLE,
     )
 
 
