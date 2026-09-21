@@ -93,6 +93,6 @@ pip install -r requirements.txt
 
 # Run the generator script
 python generate_cv.py
-Paste the target job description text, local text file path, or job posting URL, then press [ENTER] followed by [Ctrl+D] (or enter an empty line) to start the tailoring process.
 
 ```
+Paste the target job description text, local text file path, or job posting URL, then press [ENTER] followed by [Ctrl+D] (or enter an empty line) to start the tailoring process.
