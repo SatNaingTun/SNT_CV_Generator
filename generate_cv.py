@@ -2,7 +2,7 @@ import json
 import os
 import re
 import subprocess
-from config import CV_FOLDER, MODEL_NAME, OUTPUT_BASENAME, OUTPUT_DIR as OUTPUT_FOLDER
+from config import CV_FOLDER, MODEL_NAME, OUTPUT_BASENAME, OUTPUT_FOLDER
 from latex_reader import LaTeXReader
 from latex_utils import (
     convert_tabularx_to_itemize_skills,

@@ -1,0 +1,76 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{parskip}
+\usepackage{amssymb}
+
+% ==========================================
+% USER CONFIGURATION & CONTACT DETAILS
+% ==========================================
+\newcommand{\ApplicantName}{[YOUR FULL NAME]}
+\newcommand{\ApplicantEmail}{[your.email@example.com]}
+\newcommand{\ApplicantPhone}{[+00 000000000]}
+\newcommand{\ApplicantLocation}{[City, Country]}
+\newcommand{\ApplicantLinkedIn}{[linkedin.com/in/yourprofile]}
+\newcommand{\ApplicantGitHub}{[github.com/yourusername]}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue
+}
+
+\begin{document}
+
+\pagestyle{empty}
+
+% Header Section
+{\Large \textbf{\ApplicantName}} \\
+\href{mailto:\ApplicantEmail}{\ApplicantEmail} \,|\, \ApplicantPhone \,|\, \ApplicantLocation \\
+\href{https://\ApplicantLinkedIn}{\ApplicantLinkedIn} \,|\, \href{https://\ApplicantGitHub}{\ApplicantGitHub}
+
+\vspace{1.5em}
+
+\today
+
+\vspace{1em}
+
+% Recipient Metadata
+\textbf{[Recipient Title \& Name(s)]} \\
+\textbf{[Department / Institute Name]} \\
+\textbf{[University / Organization Name]} \\
+\textbf{[City, Country]}
+
+\vspace{1.5em}
+
+Dear \textbf{[Recipient Title and Last Name]},
+
+\textbf{Re: Application for \textbf{[Target Position Title]} -- \textbf{[Project / Lab Name]}}
+
+I am writing to submit my application for the \textbf{[Target Position Title]} position at \textbf{[Institute/University Name]}. I am particularly motivated by this opportunity because it integrates key domains of my engineering and research background: \textbf{[Domain 1]}, \textbf{[Domain 2]}, \textbf{[Domain 3]}, and \textbf{[Domain 4]}.
+
+My core background and research strengths include:
+\begin{itemize}[leftmargin=1.5em, label=\tiny$\blacksquare$]
+    \item \textbf{Research \& Analytical Experience:} \textbf{[Brief description of recent research projects, thesis work, or publications, including methodologies and key outcomes]}.
+    \item \textbf{Systems \& Data Engineering:} \textbf{[Description of practical platform, pipeline, or dataset work, specifying tools like Python, Django, SQL, PyTorch, etc.]}.
+    \item \textbf{Hardware \& Embedded Systems / Domain Knowledge:} \textbf{[Details on relevant hardware, coursework, laboratory experience, or technical diagnostics]}.
+    \item \textbf{Experimental Design \& Problem Solving:} \textbf{[Summary of analytical experiments, metric evaluations (e.g., latency, accuracy, throughput), or optimization tasks]}.
+\end{itemize}
+
+I believe these experiences provide a solid technical foundation for \textbf{[Target Project / Research Focus]}. I am eager to apply my knowledge of \textbf{[Key Domain Skills]} while expanding my expertise in \textbf{[Target Area of Growth / Specialization]}.
+
+I am strongly drawn to \textbf{[Institute/Department Name]} due to your innovative work in \textbf{[Specific Research Area / Recent Paper / Lab Goal]}. Collaborating with researchers and specialists to transform research prototypes into practical, real-world solutions represents the ideal trajectory for my career.
+
+Thank you for considering my application. I have attached my curriculum vitae and references for your review. I look forward to the possibility of discussing how my background can support your ongoing research initiatives.
+
+\vspace{1.5em}
+
+Yours sincerely,
+
+\vspace{1em}
+
+\ApplicantName
+
+\end{document}

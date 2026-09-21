@@ -7,11 +7,13 @@ API_BASE_URL = "http://localhost:8013/v1"
 MODEL_NAME = "gemma-3-1b-it"
 
 CV_FOLDER = "/run/media/sat-naing-tun/Data/SNT/latex/SNT_CV"
-OUTPUT_DIR = "./output"
+OUTPUT_FOLDER = "./output"
 OUTPUT_BASENAME = "cv"
+COVERLETTER_FOLDER = "./coverletter_templates"
+OUTPUT_COVERLETTER_BASENAME = "CoverLetter"
 
-PROFILE_CACHE_FILE = os.path.join(OUTPUT_DIR, "user_profile.json")
-JOB_CACHE_FILE = os.path.join(OUTPUT_DIR, "job_descriptions.json")
+PROFILE_CACHE_FILE = os.path.join(OUTPUT_FOLDER, "user_profile.json")
+JOB_CACHE_FILE = os.path.join(OUTPUT_FOLDER, "job_descriptions.json")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif"}
 

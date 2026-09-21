@@ -3,11 +3,12 @@ import json
 import os
 import re
 from typing import List
-from config import MODEL_NAME
+from config import MODEL_NAME,CV_FOLDER
 from latex_reader import LaTeXReader
 from llm_client import client
 from tqdm import tqdm
 from utils import extract_text_from_file
+
 
 # Safe PyLaTeX import
 try:
