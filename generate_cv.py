@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Section & Entry-Level Tailored LaTeX CV Generator
+Section & Entry-Level Tailored LaTeX CV & Cover Letter Generator
 Uses local llama.cpp server (Gemma 3 1B) via OpenAI-compatible API endpoint.
 
 Key Features:
 - Uses sys.stdin.read() for multi-line input (Requires [ENTER] then [Ctrl+D]).
 - Processes 'PROFESSIONAL EXPERIENCE' company-by-company to prevent dropping company names/dates.
+- Generates and compiles both cv.pdf and cover_letter.pdf into the output directory.
 - Copies image assets (.png, .jpg, .jpeg, .svg, .webp, .gif) and asset directories (e.g., photos/).
 - Prevents section header duplication by stripping echoed \section{} titles.
 - Sanitizes LaTeX special characters (C#, &, %, #).
@@ -43,6 +44,7 @@ SIMPLE_SECTIONS_TO_TAILOR = [
 # Initialize OpenAI client pointing to local llama.cpp server
 client = OpenAI(base_url=API_BASE_URL, api_key="not-needed")
 
+
 def copy_cv_assets(
     cv_folder: str,
     output_dir: str,
@@ -70,7 +72,6 @@ def copy_cv_assets(
   print(f"[+] Copying image assets from {cv_folder} to {output_dir}...")
 
   for item in os.listdir(cv_folder):
-    # Skip folders/files explicitly listed in ignore_folders
     if item in ignore_folders:
       continue
 
@@ -83,7 +84,6 @@ def copy_cv_assets(
       if os.path.exists(dst_path):
         shutil.rmtree(dst_path)
 
-      # Copy directory while preventing nested ignored directories from copying over
       shutil.copytree(
           src_path,
           dst_path,
@@ -417,9 +417,13 @@ def update_cv_sections(
   return updated_tex
 
 
-def compile_miktex_pdf(tex_filepath: str, output_dir: str):
-  """Compile generated LaTeX to PDF using pdflatex."""
-  print(f"[+] Compiling assembled LaTeX with pdflatex...")
+def compile_latex_to_pdf(tex_filepath: str, output_dir: str) -> str:
+  """Compile any generated .tex file to PDF using pdflatex."""
+  filename = os.path.basename(tex_filepath)
+  file_stem = os.path.splitext(filename)[0]
+  expected_pdf = os.path.abspath(os.path.join(output_dir, f"{file_stem}.pdf"))
+
+  print(f"[+] Compiling {filename} to PDF with pdflatex...")
   try:
     subprocess.run(
         [
@@ -432,13 +436,183 @@ def compile_miktex_pdf(tex_filepath: str, output_dir: str):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    pdf_path = os.path.abspath(os.path.join(output_dir, f"{OUTPUT_BASENAME}.pdf"))
-    print(f"[✓] Successfully compiled PDF: {pdf_path}")
-  except subprocess.CalledProcessError:
-    print(
-        "[!] pdflatex compilation encountered errors. Check output/cv.log for"
-        " details."
+    print(f"[✓] Successfully compiled PDF: {expected_pdf}")
+    return expected_pdf
+  except (subprocess.CalledProcessError, FileNotFoundError) as e:
+    print(f"[!] pdflatex compilation failed for {filename}: {e}")
+    return ""
+
+def extract_salutation(
+    job_description: str, client, model_name: str
+) -> str:
+  """Extracts or infers the most polite salutation from the job description."""
+  prompt = f"""
+Analyze the job description below to identify if a specific contact person or hiring manager is named.
+
+=== JOB DESCRIPTION ===
+{job_description[:2000]}
+
+=== RULES ===
+1. If NO specific contact person is named -> output EXACTLY: Dear Hiring Manager,
+2. If titled as Dr. or Prof. -> output e.g.: Dear Dr. [Last Name],
+3. If title is explicitly stated (Mr. / Ms.) -> output e.g.: Dear Ms. [Last Name],
+4. If a name is given without an explicit title (e.g., "Ananya" or "Ananya Prasert") -> output e.g.: Dear Ananya, or Dear Ananya Prasert,
+5. Output ONLY the single salutation line ending with a comma. No quotes, explanations, or extra text.
+"""
+
+  try:
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You extract polite email/letter salutations accurately."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.0,
+        max_tokens=20,
     )
+    salutation = response.choices[0].message.content.strip()
+    return salutation if salutation else "Dear Hiring Manager,"
+  except Exception:
+    return "Dear Hiring Manager,"
+
+def clean_cover_letter_body(text: str) -> str:
+  """Strips all LLM-generated greetings and sign-offs to prevent LaTeX duplication."""
+  text = text.strip()
+
+  # Strip all leading salutations (e.g., Dear Hiring Manager, Dear Ananya, Greetings,)
+  while True:
+    cleaned = re.sub(
+        r"^\s*(Dear\s+[^,\n]+[,:]?|To\s+[^,\n]+[,:]?|Greetings[,:]?)\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+    if cleaned == text:
+      break
+    text = cleaned
+
+  # Strip trailing sign-offs (e.g., Sincerely, Best regards, Warm regards) and any following lines
+  signoff_pattern = (
+      r"(\n\s*(Sincerely|Best\s+regards|Warm\s+regards|Kind\s+regards|Regards|Respectfully|Yours\s+truly|Thank\s+you)[,\s].*)$"
+  )
+  text = re.sub(signoff_pattern, "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+
+  return text
+
+def generate_cover_letter(
+    job_description: str,
+    applicant_name: str = "Sat Naing Tun",
+    output_dir: str = OUTPUT_DIR,
+) -> str:
+  os.makedirs(output_dir, exist_ok=True)
+  print("\n[+] Generating tailored cover letter via local LLM...")
+
+  # 1. Dynamically extract appropriate salutation
+  salutation = extract_salutation(job_description, client, MODEL_NAME)
+  print(f"[+] Using Salutation: {salutation}")
+
+  candidate_context = """
+    Applicant: Sat Naing Tun
+    Background: Master's Degree student and researcher at Asian Institute of Technology (AIT).
+    Technical Capabilities: System & Network Analysis, Python, SQL (MySQL/PostgreSQL), Linux (Ubuntu), Cloud Infrastructure (AWS, Terraform), C++, Docker/Podman, System Optimization & Automation.
+    """
+
+  prompt = f"""
+You are writing a professional, humanized cover letter body for {applicant_name}.
+
+=== CANDIDATE CONTEXT ===
+{candidate_context}
+
+=== TARGET JOB DESCRIPTION ===
+{job_description[:2500]}
+
+=== STRICT RULES ===
+1. Write EXACTLY 3 cohesive paragraphs tailored directly to the job description.
+2. Output ONLY the 3 body paragraphs.
+3. DO NOT output any salutation (e.g., "Dear ...") or sign-off (e.g., "Sincerely").
+"""
+
+  try:
+    response = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You write cover letter body paragraphs without greetings or"
+                    " sign-offs."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.3,
+        max_tokens=1000,
+    )
+
+    raw_body = response.choices[0].message.content.strip()
+
+    # Clean code blocks, residual salutations, and closings
+    if "```" in raw_body:
+      raw_body = re.sub(r"```[a-z]*", "", raw_body).replace("```", "")
+
+    body_only = clean_cover_letter_body(raw_body)
+    clean_body = sanitize_latex_characters(body_only)
+
+    # Master LaTeX document template with dynamic __SALUTATION__
+    latex_template = r"""\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{parskip}
+
+\begin{document}
+
+\pagestyle{empty}
+
+\textbf{\Large __APPLICANT_NAME__} \\
+\rule{\textwidth}{0.5pt}
+
+\vspace{1em}
+
+\today
+
+\vspace{1em}
+
+__SALUTATION__
+
+__CLEAN_BODY__
+
+\vspace{1.5em}
+
+Sincerely, \\
+\vspace{2em}
+
+\textbf{__APPLICANT_NAME__}
+
+\end{document}
+"""
+
+    latex_document = (
+        latex_template.replace("__APPLICANT_NAME__", applicant_name)
+        .replace("__SALUTATION__", salutation)
+        .replace("__CLEAN_BODY__", clean_body)
+    )
+
+    tex_filepath = os.path.join(output_dir, "cover_letter.tex")
+    with open(tex_filepath, "w", encoding="utf-8") as f:
+      f.write(latex_document)
+
+    print(f"[✓] Saved LaTeX cover letter to: {tex_filepath}")
+    return compile_latex_to_pdf(tex_filepath, output_dir)
+
+  except Exception as e:
+    print(f"[!] Warning: Failed to generate cover letter: {e}")
+    return ""
 
 
 def main():
@@ -472,17 +646,20 @@ def main():
   with open(selected_cv_path, "r", encoding="utf-8") as f:
     full_tex = f.read()
 
-  # 3. Process sections and company entries step-by-step
+  # 3. Process CV sections and company entries
   tailored_tex = update_cv_sections(full_tex, job_description)
 
-  # 4. Save reassembled LaTeX file
-  tex_filepath = os.path.join(OUTPUT_DIR, f"{OUTPUT_BASENAME}.tex")
-  with open(tex_filepath, "w", encoding="utf-8") as f:
+  # 4. Save reassembled LaTeX CV file
+  cv_tex_path = os.path.join(OUTPUT_DIR, f"{OUTPUT_BASENAME}.tex")
+  with open(cv_tex_path, "w", encoding="utf-8") as f:
     f.write(tailored_tex)
-  print(f"[✓] Saved reassembled LaTeX to: {tex_filepath}")
+  print(f"[✓] Saved reassembled LaTeX CV to: {cv_tex_path}")
 
-  # 5. Compile PDF
-  compile_miktex_pdf(tex_filepath, OUTPUT_DIR)
+  # 5. Compile CV PDF (output/cv.pdf)
+  compile_latex_to_pdf(cv_tex_path, OUTPUT_DIR)
+
+  # 6. Generate and Compile Cover Letter PDF (output/cover_letter.pdf)
+  generate_cover_letter(job_description)
 
 
 if __name__ == "__main__":
