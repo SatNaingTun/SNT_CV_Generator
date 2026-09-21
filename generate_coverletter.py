@@ -51,7 +51,7 @@ def extract_contact_info_from_cv(cv_text: str) -> Dict[str, str]:
             "name": "Sat Naing Tun",
             "email": "satnaingtun.snt@gmail.com",
             "phone": "+66 961540370",
-            "location": "Bangkok, Thailand",
+            "location": "",
             "linkedin": "https://linkedin.com/in/sat-naing-tun",
             "github": "https://github.com/SatNaingTun"
         }
@@ -123,24 +123,25 @@ def build_single_page_coverletter_latex(
         (
             "Opening Paragraph",
             (
-                f"Write a 2-3 sentence opening paragraph expressing strong enthusiasm for the "
-                f"{job_title} role at {company_str}. Introduce the candidate's degree "
-                "(Master of Engineering in IoT from Asian Institute of Technology) and technical profile."
+                f"Write a 2-3 sentence opening paragraph directly from MY perspective (using 'I', 'my'). "
+                f"Express strong enthusiasm for applying to the {job_title} role at {company_str}. "
+                "Briefly introduce my background, holding a Master of Engineering in Internet of Things Engineering "
+                "from the Asian Institute of Technology and 8+ years of IT & software engineering experience."
             ),
         ),
         (
             "Experience Alignment Paragraph",
             (
-                "Write a single 3-4 sentence body paragraph connecting candidate's exact past roles "
-                "(e.g., IT Administrator at Best Oil Company, Research Intern at NII) and technical projects "
-                f"directly to requirements: {skills_str}. STRICT RULE: Do NOT invent fictional company names like 'XYZ Corp'."
+                "Write a single 3-4 sentence body paragraph connecting my past experience as IT Administrator at Best Oil Company "
+                "and Research Intern at NII directly to requirements: "
+                f"{skills_str}. Do NOT write bullet points or repeat intro statements."
             ),
         ),
         (
             "Value & Closing Paragraph",
             (
-                "Write a 2-3 sentence closing paragraph highlighting problem-solving, system continuity experience, "
-                "and a confident interview request. Do NOT repeat any previous sentences."
+                "Write a 2-3 sentence closing paragraph highlighting my problem-solving ability, "
+                "system continuity experience, and a confident request for an interview. Do NOT repeat any previous sentences."
             ),
         ),
     ]
@@ -155,11 +156,12 @@ def build_single_page_coverletter_latex(
     ):
         system_prompt = (
             "CRITICAL INSTRUCTIONS:\n"
-            "1. Output ONLY raw prose paragraph text. Start directly with the first word.\n"
-            "2. NO conversational preambles ('Okay, here is...').\n"
-            "3. NO repeated summary sentences from earlier paragraphs.\n"
-            "4. NO bullet points, NO section headers, NO quotation marks, NO placeholders.\n"
-            "5. STRICT GROUNDING: Use ONLY real entities, companies, and projects from the CV text. Never invent fictional placeholder names like XYZ Corp."
+            "1. Write strictly in the FIRST PERSON ('I', 'my', 'me'). NEVER use third-person pronouns (he, him, his) or candidate's full name in prose.\n"
+            "2. Output ONLY raw prose paragraph text. Start directly with the first word.\n"
+            "3. NO conversational preambles ('Okay, here is...').\n"
+            "4. NO repeated summary sentences from earlier paragraphs.\n"
+            "5. NO bullet points, NO section headers, NO quotation marks, NO placeholders.\n"
+            "6. Ground strictly in candidate CV facts."
         )
         user_prompt = f"""=== CANDIDATE CV GROUND TRUTH ===
 {candidate_cv_text}
@@ -224,7 +226,7 @@ Company: {company_str}
     header_str = "\n".join(header_lines)
 
     latex_document = f"""\\documentclass[11pt,a4paper]{{article}}
-\\usepackage[utf8]{{inputenc}}
+\\package[utf8]{{inputenc}}
 \\usepackage[margin=0.75in]{{geometry}}
 \\usepackage{{hyperref}}
 \\usepackage{{parskip}}
