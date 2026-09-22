@@ -11,6 +11,7 @@ OUTPUT_FOLDER = "./output"
 OUTPUT_BASENAME = "cv"
 COVERLETTER_FOLDER = "./coverletter_templates"
 OUTPUT_COVERLETTER_BASENAME = "CoverLetter"
+DB_NAME="profile.sqlite"
 
 PROFILE_CACHE_FILE = os.path.join(OUTPUT_FOLDER, "user_profile.json")
 JOB_CACHE_FILE = os.path.join(OUTPUT_FOLDER, "job_descriptions.json")

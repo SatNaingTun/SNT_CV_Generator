@@ -1,14 +1,18 @@
+import datetime
 import glob
 import json
 import os
 import re
-from typing import List
-from config import MODEL_NAME,CV_FOLDER
+import sys
+from typing import Any, Dict, List, Optional
+from config import CV_FOLDER, MODEL_NAME, OUTPUT_FOLDER, DB_NAME
+from db_manager import SQLiteCRUD
+from job_manager import load_job_history
 from latex_reader import LaTeXReader
+from latex_writer import LaTeXWriter
 from llm_client import client
 from tqdm import tqdm
 from utils import extract_text_from_file
-
 
 # Safe PyLaTeX import
 try:
@@ -32,7 +36,6 @@ def filter_tex_over_pdf(files: List[str]) -> List[str]:
     stem, ext = os.path.splitext(base)
     ext = ext.lower()
 
-    # Remove trailing ' copy' or ' copy X' created by OS file copies
     clean_stem = re.sub(
         r"\s+copy(?:\s+\d+)?$", "", stem, flags=re.IGNORECASE
     ).strip()
@@ -50,232 +53,355 @@ def filter_tex_over_pdf(files: List[str]) -> List[str]:
 
   return sorted(deduped_files)
 
+def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]]:
+  """Deterministically parses a .tex CV file using LaTeXReader.
 
-def filter_files_by_name(
-    filenames: List[str], job_description: str, max_candidates: int = 5
-) -> List[str]:
-  """Stage 1: Pre-screens filenames against job requirements using role alignment and tech keywords."""
-  prompt = f"""=== TARGET JOB DESCRIPTION ===
-{job_description[:1200]}
+  Returns a structured dictionary if successful; otherwise returns None.
+  """
+  try:
+    reader = LaTeXReader(raw_text)
+    
+    education = reader.parse_education()
+    experience = reader.parse_experience()
+    projects = reader.parse_projects()
+    skills = reader.parse_technical_skills()
+    
+    if not (education or experience or projects or skills):
+      return None
 
-=== AVAILABLE CV FILENAMES ===
-{json.dumps(filenames, indent=2)}
+    tech_skills_dict = {}
+    for skill_group in skills:
+      if isinstance(skill_group, dict):
+        category = skill_group.get("title", "Technical Skills")
+        items = skill_group.get("bullet_points", [])
+        tech_skills_dict[category] = items
 
-INSTRUCTIONS:
-Select up to {max_candidates} filenames that best match the target role and domain based on filename titles (e.g., Software Engineer, System Analyst, Network, IoT).
-Output STRICT JSON format:
-{{"selected_filenames": ["filename1.tex", "filename2.tex"]}}
+    formatted_experience = []
+    for exp in experience:
+      if isinstance(exp, dict):
+        formatted_experience.append({
+            "job_title": exp.get("title", ""),
+            "company": exp.get("metadata", ""),
+            "from": "",
+            "to": "",
+            "bullet_points": exp.get("bullet_points", [])
+        })
+
+    formatted_education = []
+    for edu in education:
+      if isinstance(edu, dict):
+        formatted_education.append({
+            "degree": edu.get("title", ""),
+            "institution": edu.get("metadata", ""),
+            "from": "",
+            "to": "",
+            "coursework": [],
+            "thesis": ""
+        })
+
+    formatted_projects = []
+    for proj in projects:
+      if isinstance(proj, dict):
+        formatted_projects.append({
+            "project_name": proj.get("title", ""),
+            "dates": proj.get("metadata", ""),
+            "tech_stack": [],
+            "details": proj.get("bullet_points", [])
+        })
+
+    abs_path = os.path.abspath(filepath)
+    filename = os.path.basename(filepath)
+
+    return {
+        "candidate_name": "",
+        "target_role": "",
+        "contact_info": "",
+        "summaries": [],
+        "technical_skills": tech_skills_dict,
+        "core_competencies": [],
+        "work_experience": formatted_experience,
+        "education": formatted_education,
+        "projects": formatted_projects,
+        "certifications": [],
+        "languages": [],
+        "file_path": abs_path,
+        "source_file": filename,
+        "latex_granular": {
+            "education_structured": education,
+            "experience_structured": experience,
+            "projects_structured": projects,
+            "skills_structured": skills,
+            "sections": reader.sections
+        }
+    }
+  except Exception:
+    return None
+
+
+def _parse_cv_with_llm(filepath: str, raw_text: str) -> Dict[str, Any]:
+  """Parses CV files (such as PDFs or unstructured TeX) using the LLM parser with safety checks."""
+  abs_path = os.path.abspath(filepath)
+  filename = os.path.basename(filepath)
+
+  prompt = f"""Extract full detailed CV information into precise JSON from this CV file content ({filename}).
+Preserve all rich details, full bullet points, exact dates, institutions, degrees, projects, and certifications.
+
+=== CV FILE CONTENT ({filename}) ===
+{raw_text[:8000]}
+
+=== JSON OUTPUT SCHEMA ===
+{{
+  "candidate_name": "Full Candidate Name",
+  "target_role": "Target Role or Job Title",
+  "contact_info": "Email | Phone | LinkedIn | GitHub",
+  "summaries": ["Professional summary text"],
+  "technical_skills": {{
+    "Category Name": ["Skill 1", "Skill 2"]
+  }},
+  "core_competencies": ["Competency 1", "Competency 2"],
+  "work_experience": [
+    {{
+      "job_title": "Job Title",
+      "company": "Company Name",
+      "from": "Start Date",
+      "to": "End Date",
+      "bullet_points": ["Detailed bullet point 1"]
+    }}
+  ],
+  "education": [
+    {{
+      "degree": "Degree Title",
+      "institution": "University Name",
+      "from": "Start Date",
+      "to": "End Date",
+      "coursework": ["Course 1"],
+      "thesis": "Thesis title"
+    }}
+  ],
+  "projects": [
+    {{
+      "project_name": "Project Name",
+      "dates": "Dates",
+      "tech_stack": ["Tech 1"],
+      "details": ["Detail 1"]
+    }}
+  ],
+  "certifications": [
+    {{
+      "certificate_name": "Name of Certificate",
+      "certificate_id": "ID if available",
+      "from": "From date",
+      "to": "To date",
+      "url": "URL if available"
+    }}
+  ],
+  "languages": ["Language 1"]
+}}
 """
+
   try:
     response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
             {
                 "role": "system",
-                "content": (
-                    "You are a recruitment specialist matching CV template"
-                    " names to job descriptions."
-                ),
+                "content": "You are an expert CV parser. Extract structured resume data accurately into JSON.",
             },
             {"role": "user", "content": prompt},
         ],
         temperature=0.0,
         response_format={"type": "json_object"},
     )
-    res = json.loads(response.choices[0].message.content.strip())
-    selected = res.get("selected_filenames", [])
-    valid_selected = [f for f in selected if f in filenames]
-    return valid_selected if valid_selected else filenames[:max_candidates]
+    content_str = response.choices[0].message.content.strip()
+    parsed = json.loads(content_str)
+    
+    # Ensure parsed is a dictionary
+    if not isinstance(parsed, dict):
+      return {}
 
-  except Exception as e:
-    print(f"\n[!] Filename screening error: {e}. Considering default set.")
-    return filenames[:max_candidates]
+    parsed["file_path"] = abs_path
+    parsed["source_file"] = filename
+    parsed["latex_granular"] = {}
+    return parsed
+  except Exception:
+    return {}
 
 
-def extract_cv_summary(filepath: str) -> dict:
-  """Extracts summary and skills sections using LaTeXReader AST."""
-  filename = os.path.basename(filepath)
-  raw_text = ""
+def parse_cv_file(filepath: str) -> Dict[str, Any]:
+  """Parses CV files natively via LaTeXReader if it's a valid .tex file;
 
+  otherwise falls back to LLM extraction. Skips LLM if native parsing succeeds.
+  """
   try:
     raw_text = extract_text_from_file(filepath)
-  except Exception as e:
-    print(f"\n[!] Error reading file '{filename}': {e}")
-    return {"filepath": filepath, "filename": filename, "summary": ""}
+  except Exception:
+    return {}
 
-  condensed_text = ""
+  if not raw_text.strip():
+    return {}
 
-  if filepath.endswith(".tex"):
-    try:
-      reader = LaTeXReader(raw_text)
-      summary = (
-          reader.get_section("SUMMARY")
-          or reader.get_section("PROFESSIONAL SUMMARY")
-          or reader.get_section("OBJECTIVE")
-      )
-      skills = reader.get_section(
-          "Technical Skills"
-      ) or reader.get_section("SKILLS")
+  is_tex = filepath.endswith(".tex")
 
-      if summary or skills:
-        condensed_text = (
-            f"Summary:\n{summary[:500]}\n\nSkills:\n{skills[:500]}"
-        )
-      else:
-        condensed_text = raw_text[:1000]
+  # 1. Try native deterministic parsing first for TeX files to avoid LLM calls
+  if is_tex:
+    native_result = _parse_tex_natively(filepath, raw_text)
+    if native_result:
+      return native_result
 
-      if HAS_PYLATEX:
-        condensed_text = escape_latex(condensed_text)
-
-    except Exception as e:
-      print(
-          f"\n[!] Parsing error for '{filename}': {e}. Using raw text"
-          " fallback."
-      )
-      condensed_text = raw_text[:1000]
-  else:
-    condensed_text = raw_text[:1000]
-
-  return {
-      "filepath": filepath,
-      "filename": filename,
-      "summary": condensed_text,
-  }
+  # 2. Fallback to LLM extraction for PDFs or unparseable text
+  return _parse_cv_with_llm(filepath, raw_text)
 
 
-def score_cv_match(cv_info: dict, job_description: str) -> float:
-  """Evaluates template relevance against the job posting."""
-  if not cv_info.get("summary"):
-    return 0.0
+def select_optimal_cv_file(cv_folder: str) -> Optional[str]:
+  """Selects the best matching CV template based on the cached job description."""
+  raw_files = glob.glob(os.path.join(cv_folder, "*.tex")) + glob.glob(
+      os.path.join(cv_folder, "*.pdf")
+  )
+  files = filter_tex_over_pdf(raw_files)
+  
+  if not files:
+    return None
 
-  prompt = f"""=== TARGET JOB DESCRIPTION ===
-{job_description[:1500]}
+  if len(files) == 1:
+    return files[0]
 
-=== CANDIDATE CV CONTENT ({cv_info['filename']}) ===
-{cv_info['summary']}
+  job_data = load_job_history()
+  job_description = job_data.get("raw_text", "") or json.dumps(job_data, indent=2)
+
+  file_options = {os.path.basename(f): f for f in files}
+
+  system_prompt = (
+      "You are an expert career advisor. Select the single most relevant CV template "
+      "file from the available options that best matches the target job description. "
+      "Output ONLY the exact filename in JSON format like: {\"selected_file\": \"filename.tex\"}"
+  )
+
+  user_prompt = f"""=== TARGET JOB DESCRIPTION ===
+{job_description[:3000]}
+
+=== AVAILABLE CV TEMPLATES ===
+{list(file_options.keys())}
 
 INSTRUCTIONS:
-Evaluate how well this CV template's target role, experience summary, and technical focus match the job description.
-Score from 0 (completely irrelevant) to 100 (perfect domain & skill match).
-Output STRICT JSON:
-{{"score": <number_0_to_100>}}
+Choose the best matching template file name.
 """
+
   try:
     response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are an ATS evaluator rating CV template relevance."
-                ),
-            },
-            {"role": "user", "content": prompt},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
         temperature=0.0,
         response_format={"type": "json_object"},
     )
-    res = json.loads(response.choices[0].message.content.strip())
-    return float(res.get("score", 0))
+    result = json.loads(response.choices[0].message.content.strip())
+    selected_name = result.get("selected_file")
+    if selected_name in file_options:
+      return file_options[selected_name]
+  except Exception:
+    pass
 
-  except Exception as e:
-    print(f"\n[!] Scoring failed for '{cv_info['filename']}': {e}")
-    return 0.0
+  return files[0]
 
 
-def select_optimal_cv_file(folder_path: str, job_description: str) -> str:
-  """Lists candidate templates, pre-screens and scores recommendations,
+def build_sqlite_master_profile(
+    cv_folder: str = CV_FOLDER,
+    output_folder: str = OUTPUT_FOLDER,
+    force_rebuild: bool = False,
+) -> str:
+  """Scans all CV files, parses them using LaTeXReader/LLM, and populates SQLite DB."""
+  db_path = os.path.join(output_folder, DB_NAME)
+  db = SQLiteCRUD(db_path)
 
-  and allows selecting any template by item number (1..N) or filename string.
-  """
-  raw_files = glob.glob(os.path.join(folder_path, "*.tex")) + glob.glob(
-      os.path.join(folder_path, "*.pdf")
+  raw_files = glob.glob(os.path.join(cv_folder, "*.tex")) + glob.glob(
+      os.path.join(cv_folder, "*.pdf")
   )
-  if not raw_files:
-    raise FileNotFoundError(f"No .tex or .pdf CV files found in {folder_path}")
-
-  # 1. Deduplicate files (strip ' copy' and prioritize .tex over .pdf)
   files = filter_tex_over_pdf(raw_files)
 
-  filename_to_path = {os.path.basename(f): f for f in files}
-  all_filenames = sorted(list(filename_to_path.keys()))
+  if not files:
+    db.close()
+    return db_path
 
-  # 2. Display full numbered candidate file list
-  print(
-      f"\n[+] Found {len(all_filenames)} candidate CV template file(s)"
-      " (showing .tex where .pdf duplicates exist):"
+  if force_rebuild:
+    db.clear_all()
+
+  # Create the progress bar object
+  pbar = tqdm(files, desc="Processing CV files", unit="file")
+  
+  for filepath in pbar:
+    try:
+      rel_path = os.path.basename(filepath)
+      abs_path = os.path.abspath(filepath)
+      
+      # Update the progress bar to show the current file on the right side
+      pbar.set_postfix(file=rel_path)
+
+      mtime = os.path.getmtime(filepath)
+      formatted_date = datetime.datetime.fromtimestamp(mtime).strftime(
+          "%Y-%m-%d %H:%M:%S"
+      )
+
+      stored_mtime = db.get_file_mtime(rel_path)
+      if stored_mtime is not None and not force_rebuild and stored_mtime == mtime:
+        continue
+
+      parsed_data = parse_cv_file(abs_path)
+      if not parsed_data:
+        continue
+
+      db.upsert_scanned_file(rel_path, abs_path, mtime, formatted_date)
+
+      sections = ["summary", "education", "project", "certificate", "language", "skills"]
+      
+      # Optional: You can disable the inner progress bar or keep it. 
+      # Since we are showing the file in the outer loop, a silent inner loop might look cleaner, 
+      # but keeping it as-is works fine too!
+      for section in tqdm(sections, desc=f"   -> Inserting sections", leave=False):
+        if section == "summary":
+          db.store_summary_section(parsed_data, rel_path)
+        elif section == "education":
+          db.store_education_section(parsed_data)
+        elif section == "project":
+          db.store_project_section(parsed_data)
+        elif section == "certificate":
+          db.store_certificate_section(parsed_data)
+        elif section == "language":
+          db.store_language_section(parsed_data)
+        elif section == "skills":
+          db.store_skills_section(parsed_data, rel_path)
+
+    except Exception as e:
+      print(f"\n[!] Error processing file {filepath}: {e}")
+      continue
+
+  db.close()
+  return db_path
+
+
+def main():
+  """CLI entry point to scan CV folder and update the SQLite master database."""
+  force_rebuild = "--force" in sys.argv or "-f" in sys.argv
+
+  custom_folder = None
+  for arg in sys.argv[1:]:
+    if not arg.startswith("-"):
+      custom_folder = arg
+      break
+
+  target_cv_folder = custom_folder or CV_FOLDER
+  target_output_folder = OUTPUT_FOLDER
+
+  db_path = build_sqlite_master_profile(
+      cv_folder=target_cv_folder,
+      output_folder=target_output_folder,
+      force_rebuild=force_rebuild,
   )
-  for idx, fname in enumerate(all_filenames, 1):
-    print(f"  {idx:2d}. {fname}")
-  print()
 
-  # 3. Stage 1: Filename Pre-screening
-  if len(all_filenames) > 4:
-    print("[1/2] Pre-screening filenames against job description...")
-    candidate_filenames = filter_files_by_name(
-        all_filenames, job_description, max_candidates=5
-    )
-  else:
-    candidate_filenames = all_filenames
+  abs_db_path = os.path.abspath(db_path)
+  print(abs_db_path)
 
-  candidate_paths = [filename_to_path[fname] for fname in candidate_filenames]
 
-  # 4. Stage 2: Evaluation & Scoring
-  print("\n[2/2] Evaluating template relevance scores:")
-  scored_results = []
-
-  for filepath in tqdm(candidate_paths, desc="Scoring Templates", unit="file"):
-    summary_info = extract_cv_summary(filepath)
-    score = score_cv_match(summary_info, job_description)
-    scored_results.append((summary_info["filename"], filepath, score))
-
-  scored_results.sort(key=lambda x: x[2], reverse=True)
-
-  # 5. Display Shortlisted Recommendations
-  print("\n" + "=" * 60)
-  print("   SHORTLISTED CV TEMPLATES & MATCH SCORES")
-  print("=" * 60)
-  for idx, (filename, fpath, score) in enumerate(scored_results, 1):
-    indicator = " (Top Recommendation)" if idx == 1 else ""
-    print(f" [{idx}] {filename:<38} | Score: {score}/100{indicator}")
-  print("=" * 60)
-
-  top_choice_file = scored_results[0][1]
-  top_choice_name = scored_results[0][0]
-
-  # 6. Interactive Selection Prompt
-  print(f"\nDefault selected template: [{top_choice_name}]")
-  user_choice = input(
-      f"Press [ENTER] to use top recommendation, or enter file number (1-"
-      f"{len(all_filenames)}) / filename to override: "
-  ).strip()
-
-  if not user_choice:
-    print(f"[✓] Confirmed template: {top_choice_name}")
-    return top_choice_file
-
-  # Resolution Step 1: Match entered number against main enumerated file list (1..N)
-  if user_choice.isdigit():
-    choice_num = int(user_choice)
-    if 1 <= choice_num <= len(all_filenames):
-      selected_fname = all_filenames[choice_num - 1]
-      selected_path = filename_to_path[selected_fname]
-      print(f"[✓] User selected [{choice_num}]: {selected_fname}")
-      return selected_path
-
-  # Resolution Step 2: Match exact filename
-  if user_choice in filename_to_path:
-    print(f"[✓] User selected: {user_choice}")
-    return filename_to_path[user_choice]
-
-  # Resolution Step 3: Match partial filename
-  for fname, fpath in filename_to_path.items():
-    if user_choice.lower() in fname.lower():
-      print(f"[✓] Matched user choice to: {fname}")
-      return fpath
-
-  print(
-      "[!] Input choice unrecognized. Defaulting to top recommendation:"
-      f" {top_choice_name}"
-  )
-  return top_choice_file
+if __name__ == "__main__":
+  main()
