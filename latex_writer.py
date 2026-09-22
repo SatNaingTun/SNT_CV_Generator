@@ -10,11 +10,11 @@ class LaTeXWriter:
     if not text:
       return ""
 
-    # Protect existing commands
-    text = text.replace(r"\%", "__PERCENT_ESC__")
-    text = text.replace(r"\&", "__AMP_ESC__")
-    text = text.replace(r"\#", "__HASH_ESC__")
-    text = text.replace(r"\_", "__UNDERSCORE_ESC__")
+    # Protect existing commands using non-special tokens (no underscores)
+    text = text.replace(r"\%", "XXPERCENTESCXX")
+    text = text.replace(r"\&", "XXAMPESCXX")
+    text = text.replace(r"\#", "XXHASHESCXX")
+    text = text.replace(r"\_", "XXUNDERSCOREESCXX")
 
     # Escape raw unescaped characters
     text = text.replace("%", r"\%")
@@ -23,10 +23,10 @@ class LaTeXWriter:
     text = text.replace("_", r"\_")
 
     # Restore protected commands
-    text = text.replace("__PERCENT_ESC__", r"\%")
-    text = text.replace("__AMP_ESC__", r"\&")
-    text = text.replace("__HASH_ESC__", r"\#")
-    text = text.replace("__UNDERSCORE_ESC__", r"\_")
+    text = text.replace("XXPERCENTESCXX", r"\%")
+    text = text.replace("XXAMPESCXX", r"\&")
+    text = text.replace("XXHASHESCXX", r"\#")
+    text = text.replace("XXUNDERSCOREESCXX", r"\_")
 
     return text
 

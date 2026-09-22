@@ -1,44 +1,19 @@
 import json
 import os
-import re
 import subprocess
 from config import CV_FOLDER, MODEL_NAME, OUTPUT_BASENAME, OUTPUT_FOLDER
 from latex_reader import LaTeXReader
 from latex_utils import (
     convert_tabularx_to_itemize_skills,
+    remove_manual_pagebreaks,
+    replace_section_in_raw_tex,
     replace_skills_section_in_raw_tex,
     strip_section_headers,
 )
 from latex_writer import LaTeXWriter
 from llm_client import client
 from profile_manager import select_optimal_cv_file
-
-
-def replace_section_in_raw_tex(
-    raw_tex: str, section_name: str, new_content: str
-) -> str:
-  """Replaces a specific section's body using lambda string insertion to avoid backslash escape crashes."""
-  pattern = re.compile(
-      r"(\\section\*?\{"
-      + re.escape(section_name)
-      + r"\}\s*\n)(.*?)(?=\n\\section|\n\\end\{document\}|\Z)",
-      re.DOTALL | re.IGNORECASE,
-  )
-
-  if pattern.search(raw_tex):
-    return pattern.sub(lambda m: m.group(1) + new_content + "\n", raw_tex)
-
-  fuzzy_pattern = re.compile(
-      r"(\\section\*?\{[^}]*"
-      + re.escape(section_name)
-      + r"[^}]*\}\s*\n)(.*?)(?=\n\\section|\n\\end\{document\}|\Z)",
-      re.DOTALL | re.IGNORECASE,
-  )
-
-  if fuzzy_pattern.search(raw_tex):
-    return fuzzy_pattern.sub(lambda m: m.group(1) + new_content + "\n", raw_tex)
-
-  return raw_tex
+from utils import prompt_for_job_description
 
 
 def query_and_update_skills_section(raw_tex: str, job_description: str) -> str:
@@ -95,7 +70,7 @@ def query_section_llm(
 
   system_prompt = (
       "You are a professional CV editor. Output ONLY the tailored LaTeX body content. "
-      "Do NOT include outer \\section{} headers or commentary."
+      "Do NOT include outer \\section{{}} headers or commentary."
   )
 
   user_prompt = f"""=== TARGET JOB DESCRIPTION ===
@@ -153,9 +128,9 @@ def compile_latex(tex_filepath: str) -> bool:
 def generate_tailored_cv(
     template_path: str, job_description: str, output_path: str
 ) -> str:
-  """Main pipeline: Reads template, converts tabularx skills to itemize,
+  """Main pipeline: Reads template, strips manual pagebreaks, tailors sections,
 
-  tailors sections via LLM, saves output .tex, and compiles to PDF.
+  saves output .tex, and compiles to PDF.
   """
   print(
       f"\n[+] Processing selected template: {os.path.basename(template_path)}"
@@ -164,13 +139,16 @@ def generate_tailored_cv(
   with open(template_path, "r", encoding="utf-8", errors="ignore") as f:
     raw_tex = f.read()
 
-  # 1. Convert tabularx tables to itemize blocks
+  # 1. Remove hardcoded \newpage commands so expanding sections flow naturally
+  raw_tex = remove_manual_pagebreaks(raw_tex)
+
+  # 2. Convert tabularx tables to itemize blocks
   raw_tex = convert_tabularx_to_itemize_skills(raw_tex)
 
-  # 2. Tailor Technical Skills section
+  # 3. Tailor Technical Skills section
   raw_tex = query_and_update_skills_section(raw_tex, job_description)
 
-  # 3. Tailor Professional Summary section
+  # 4. Tailor Professional Summary section
   reader = LaTeXReader(raw_tex)
   summary_content = (
       reader.get_section("SUMMARY")
@@ -189,32 +167,26 @@ def generate_tailored_cv(
     )
     raw_tex = replace_section_in_raw_tex(raw_tex, sec_title, tailored_summary)
 
-  # 4. Save tailored LaTeX file using dynamic OUTPUT_BASENAME
+  # 5. Save tailored LaTeX file
   os.makedirs(os.path.dirname(output_path), exist_ok=True)
   with open(output_path, "w", encoding="utf-8") as f:
     f.write(raw_tex)
 
   print(f"[✓] Tailored LaTeX saved to: {output_path}")
 
-  # 5. Compile to PDF
+  # 6. Compile to PDF
   compile_latex(output_path)
 
   return output_path
 
 
 if __name__ == "__main__":
-  target_job_description = """
-    We are looking for an IT Systems Administrator / Software Engineer to support, maintain, and 
-    enhance core IT infrastructure, SQL databases, and C# internal reporting software. 
-    Experience with Linux servers, AWS, network troubleshooting, and Python automation is required.
-    """
+  target_job_description = prompt_for_job_description()
 
-  # Select template
   selected_template = select_optimal_cv_file(
       CV_FOLDER, target_job_description
   )
 
-  # Determine output .tex path based on OUTPUT_BASENAME config
   base_filename = (
       os.path.splitext(OUTPUT_BASENAME)[0]
       if OUTPUT_BASENAME.endswith(".tex")
@@ -222,7 +194,6 @@ if __name__ == "__main__":
   )
   output_tex_file = os.path.join(OUTPUT_FOLDER, f"{base_filename}.tex")
 
-  # Generate CV
   generate_tailored_cv(
       selected_template, target_job_description, output_tex_file
   )

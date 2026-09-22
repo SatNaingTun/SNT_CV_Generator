@@ -18,18 +18,18 @@ class LaTeXReader:
       self.raw_text = content_or_file
 
   def get_section(self, section_name: str) -> str:
-    """Extracts section body text by section header title."""
-    if not self.raw_text:
-      return ""
+        """Extracts section body text by section header title."""
+        if not self.raw_text:
+            return ""
 
-    pattern = re.compile(
-        r"\\section\*?\{[^}]*"
-        + re.escape(section_name)
-        + r"[^}]*\}\s*\n(.*?)(?=\n\\section|\n\\end\{document\}|\Z)",
-        re.DOTALL | re.IGNORECASE,
-    )
-    match = pattern.search(self.raw_text)
-    return match.group(1).strip() if match else ""
+        pattern = re.compile(
+            r"\\section\*?\{[^}]*"
+            + re.escape(section_name)
+            + r"[^}]*\}\s*\n(.*?)(?=\n\\section\*?|\n\\end\{document\}|\Z)",
+            re.DOTALL | re.IGNORECASE,
+        )
+        match = pattern.search(self.raw_text)
+        return match.group(1).strip() if match else ""
 
   @staticmethod
   def extract_skills_dict(latex_text: str) -> dict:
