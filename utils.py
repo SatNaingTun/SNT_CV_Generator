@@ -16,6 +16,24 @@ except ImportError:
   pypdf = None
 
 
+def format_job_summary(job_data: dict) -> str:
+  """Formats structured job details into a clean summary string for LLM prompts."""
+  skills = ", ".join(job_data.get("required_skills", []))
+  certs = ", ".join(job_data.get("required_certifications", []))
+  edu = ", ".join(job_data.get("required_education", []))
+  langs = ", ".join(job_data.get("required_languages", []))
+
+  return f"""TARGET ROLE: {job_data.get('job_title', 'N/A')}
+COMPANY: {job_data.get('company_name', 'N/A')}
+RECRUITER/CONTACT: {job_data.get('recipient_name', 'Hiring Manager')} ({job_data.get('recipient_title', 'Talent Acquisition')})
+REQUIRED SKILLS: {skills if skills else 'N/A'}
+REQUIRED CERTIFICATIONS: {certs if certs else 'N/A'}
+REQUIRED EDUCATION: {edu if edu else 'N/A'}
+REQUIRED LANGUAGES: {langs if langs else 'N/A'}
+NATIONALITY REQUIREMENTS: {job_data.get('nationality_requirements', 'Not specified')}
+VISA REQUIREMENTS: {job_data.get('visa_requirements', 'Not specified')}"""
+
+
 def read_text_file(filepath: str) -> str:
   """Reads plain text content from a local file safely."""
   if not os.path.exists(filepath):

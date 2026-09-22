@@ -1,7 +1,7 @@
 import json
 import os
-import subprocess
 from config import CV_FOLDER, MODEL_NAME, OUTPUT_BASENAME, OUTPUT_FOLDER
+from job_manager import get_or_cache_job_description
 from latex_reader import LaTeXReader
 from latex_utils import (
     convert_tabularx_to_itemize_skills,
@@ -13,14 +13,18 @@ from latex_utils import (
 from latex_writer import LaTeXWriter
 from llm_client import client
 from profile_manager import select_optimal_cv_file
-from utils import prompt_for_job_description
+from utils import (
+    compile_latex_to_pdf,
+    format_job_summary,
+    prompt_for_job_description,
+)
 
 
-def query_and_update_skills_section(raw_tex: str, job_description: str) -> str:
-  """Extracts technical skills, tailors them via LLM, and replaces section with LaTeX itemize block."""
+def query_and_update_skills_section(
+    raw_tex: str, job_summary_str: str, existing_skills: dict
+) -> str:
+  """Extracts technical skills, tailors them via LLM using structured job specs, and replaces section."""
   print("[+] Tailoring section: 'Technical Skills'...")
-
-  existing_skills = LaTeXReader.extract_skills_dict(raw_tex)
 
   system_prompt = (
       "You are an expert technical resume editor. Output ONLY a valid JSON object "
@@ -28,14 +32,14 @@ def query_and_update_skills_section(raw_tex: str, job_description: str) -> str:
       "Do NOT drop essential core skills from the existing skills list."
   )
 
-  user_prompt = f"""=== TARGET JOB DESCRIPTION ===
-{job_description[:1500]}
+  user_prompt = f"""=== TARGET JOB SPECIFICATIONS ===
+{job_summary_str}
 
 === EXISTING CANDIDATE SKILLS ===
 {json.dumps(existing_skills, indent=2) if existing_skills else "Extract and optimize based on target role."}
 
 INSTRUCTIONS:
-1. Re-organize and tailor technical skills to align with target job requirements.
+1. Re-organize and tailor technical skills to align with target job specifications and required skills.
 2. Output STRICT JSON format mapping category names to comma-separated skill strings.
 """
   try:
@@ -63,18 +67,18 @@ INSTRUCTIONS:
 
 
 def query_section_llm(
-    section_name: str, section_content: str, job_description: str
+    section_name: str, section_content: str, job_summary_str: str
 ) -> str:
-  """Tailors standard resume prose sections (Summary, Experience, Projects) using LLM."""
+  """Tailors standard resume prose sections (Summary, Experience, Projects) using structured job specs."""
   print(f"[+] Tailoring section: '{section_name}'...")
 
   system_prompt = (
       "You are a professional CV editor. Output ONLY the tailored LaTeX body content. "
-      "Do NOT include outer \\section{{}} headers or commentary."
+      "Do NOT include outer \\section{} headers or commentary."
   )
 
-  user_prompt = f"""=== TARGET JOB DESCRIPTION ===
-{job_description[:1500]}
+  user_prompt = f"""=== TARGET JOB SPECIFICATIONS ===
+{job_summary_str}
 
 === SECTION NAME ===
 {section_name}
@@ -83,7 +87,7 @@ def query_section_llm(
 {section_content}
 
 INSTRUCTIONS:
-1. Tailor bullet points and summary text to match key requirements from the job description.
+1. Tailor bullet points and summary text to match key specifications, required skills, certifications, and language requirements.
 2. Preserve valid LaTeX formatting and itemize structures.
 3. Output ONLY the body snippet without wrapping section commands.
 """
@@ -106,31 +110,12 @@ INSTRUCTIONS:
     return section_content
 
 
-def compile_latex(tex_filepath: str) -> bool:
-  """Compiles the tailored .tex file into a PDF using pdflatex."""
-  output_dir = os.path.dirname(tex_filepath)
-  try:
-    cmd = [
-        "pdflatex",
-        "-interaction=nonstopmode",
-        f"-output-directory={output_dir}",
-        tex_filepath,
-    ]
-    subprocess.run(cmd, capture_output=True, text=True, check=True)
-    pdf_path = os.path.splitext(tex_filepath)[0] + ".pdf"
-    print(f"[✓] Successfully compiled PDF: {pdf_path}")
-    return True
-  except (subprocess.CalledProcessError, FileNotFoundError) as e:
-    print(f"[!] pdflatex compilation failed or pdflatex is not installed: {e}")
-    return False
-
-
 def generate_tailored_cv(
-    template_path: str, job_description: str, output_path: str
+    template_path: str, job_data: dict, output_path: str
 ) -> str:
-  """Main pipeline: Reads template, strips manual pagebreaks, tailors sections,
+  """Main pipeline: Reads template, strips manual pagebreaks, tailors sections using structured job specifications,
 
-  saves output .tex, and compiles to PDF.
+  saves output .tex, and compiles to PDF via utils.
   """
   print(
       f"\n[+] Processing selected template: {os.path.basename(template_path)}"
@@ -139,16 +124,22 @@ def generate_tailored_cv(
   with open(template_path, "r", encoding="utf-8", errors="ignore") as f:
     raw_tex = f.read()
 
-  # 1. Remove hardcoded \newpage commands so expanding sections flow naturally
+  # 1. Format structured job requirements
+  job_summary_str = format_job_summary(job_data)
+
+  # 2. Remove hardcoded \newpage commands
   raw_tex = remove_manual_pagebreaks(raw_tex)
 
-  # 2. Convert tabularx tables to itemize blocks
+  # 3. Convert tabularx tables to itemize blocks
   raw_tex = convert_tabularx_to_itemize_skills(raw_tex)
 
-  # 3. Tailor Technical Skills section
-  raw_tex = query_and_update_skills_section(raw_tex, job_description)
+  # 4. Tailor Technical Skills section
+  existing_skills = LaTeXReader.extract_skills_dict(raw_tex)
+  raw_tex = query_and_update_skills_section(
+      raw_tex, job_summary_str, existing_skills
+  )
 
-  # 4. Tailor Professional Summary section
+  # 5. Tailor Professional Summary section
   reader = LaTeXReader(raw_tex)
   summary_content = (
       reader.get_section("SUMMARY")
@@ -163,28 +154,30 @@ def generate_tailored_cv(
         else ("SUMMARY" if "SUMMARY" in raw_tex else "OBJECTIVE")
     )
     tailored_summary = query_section_llm(
-        sec_title, summary_content, job_description
+        sec_title, summary_content, job_summary_str
     )
     raw_tex = replace_section_in_raw_tex(raw_tex, sec_title, tailored_summary)
 
-  # 5. Save tailored LaTeX file
-  os.makedirs(os.path.dirname(output_path), exist_ok=True)
+  # 6. Save tailored LaTeX file
+  output_dir = os.path.dirname(output_path)
+  os.makedirs(output_dir, exist_ok=True)
   with open(output_path, "w", encoding="utf-8") as f:
     f.write(raw_tex)
 
   print(f"[✓] Tailored LaTeX saved to: {output_path}")
 
-  # 6. Compile to PDF
-  compile_latex(output_path)
+  # 7. Compile to PDF using utils function
+  compile_latex_to_pdf(output_path, output_dir)
 
   return output_path
 
 
 if __name__ == "__main__":
-  target_job_description = prompt_for_job_description()
+  raw_input = prompt_for_job_description()
+  job_data = get_or_cache_job_description(raw_input)
 
   selected_template = select_optimal_cv_file(
-      CV_FOLDER, target_job_description
+      CV_FOLDER, job_data.get("raw_text", raw_input)
   )
 
   base_filename = (
@@ -194,6 +187,4 @@ if __name__ == "__main__":
   )
   output_tex_file = os.path.join(OUTPUT_FOLDER, f"{base_filename}.tex")
 
-  generate_tailored_cv(
-      selected_template, target_job_description, output_tex_file
-  )
+  generate_tailored_cv(selected_template, job_data, output_tex_file)
