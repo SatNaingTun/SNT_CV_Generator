@@ -9,11 +9,55 @@ from TexSoup import TexSoup
 from config import IGNORE_FOLDERS, IMAGE_EXTENSIONS
 from latex_reader import LaTeXReader
 from latex_writer import LaTeXWriter
+import os
+import os
+
+try:
+  import pymupdf  # Recommended modern import
+  HAS_PYMUPDF = True
+except ImportError:
+  HAS_PYMUPDF = False
 
 try:
   import pypdf
+  HAS_PYPDF = True
 except ImportError:
-  pypdf = None
+  HAS_PYPDF = False
+
+
+def extract_text_from_file(filepath: str) -> str:
+  """Extracts text from files (.tex, .pdf, .txt) extremely fast.
+
+  Uses PyMuPDF for PDFs if available, falling back to pypdf.
+  """
+  ext = os.path.splitext(filepath)[1].lower()
+  text = ""
+
+  if ext in [".tex", ".txt"]:
+    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+      return f.read()
+
+  elif ext == ".pdf":
+    # 1. Try PyMuPDF first (blazing fast C-bound extraction)
+    if HAS_PYMUPDF:
+      try:
+        with pymupdf.open(filepath) as doc:
+          text = "".join(page.get_text() for page in doc)
+        if text.strip():
+          return text
+      except Exception:
+        pass
+
+    # 2. Fallback to pypdf if PyMuPDF fails
+    if HAS_PYPDF:
+      try:
+        reader = pypdf.PdfReader(filepath)
+        text = "".join(page.extract_text() or "" for page in reader.pages)
+        return text
+      except Exception:
+        pass
+
+  return text
 
 
 def format_job_summary(job_data: dict) -> str:
@@ -49,31 +93,6 @@ def write_text_file(filepath: str, content: str) -> None:
     f.write(content)
 
 
-def extract_text_from_file(filepath: str) -> str:
-  """Extracts plain text content from .tex, .pdf, .txt, or .md files."""
-  if not os.path.exists(filepath):
-    raise FileNotFoundError(f"File not found: {filepath}")
-
-  ext = os.path.splitext(filepath)[1].lower()
-
-  if ext in [".tex", ".txt", ".md"]:
-    return read_text_file(filepath)
-
-  elif ext == ".pdf":
-    if pypdf is None:
-      raise ImportError(
-          "pypdf library is required for PDF parsing: pip install pypdf"
-      )
-    text_content = []
-    with open(filepath, "rb") as f:
-      reader = pypdf.PdfReader(f)
-      for page in reader.pages:
-        extracted = page.extract_text()
-        if extracted:
-          text_content.append(extracted)
-    return "\n".join(text_content).strip()
-
-  raise ValueError(f"Unsupported file format: {ext}")
 
 
 def copy_cv_assets(

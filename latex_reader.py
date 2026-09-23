@@ -1,19 +1,30 @@
 import re
 from typing import Any, Dict, List, Optional
+from difflib import get_close_matches
+import os
+import pandas as pd
+import logging
 
-from tqdm import tqdm
+# Configure file logging
+logging.basicConfig(
+    filename="parser.log",
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 
+from university_validator import UniversityValidator
 
 class LaTeXReader:
   """Specialized LaTeX CV Reader designed to parse structured sections
 
-  (Education, Professional Experience, Projects, Technical Skills) 
-  handling both \\begin{itemize}...\\end{itemize} and tabular/tabularx environments.
+  and document metadata natively without comment stripping.
   """
 
   def __init__(self, raw_text: str):
     self.raw_text = raw_text
     self.sections = self._extract_sections()
+    self.validator = UniversityValidator()
 
   def _extract_sections(self) -> Dict[str, str]:
     """Extracts top-level LaTeX sections based on \\section{...} or \\section*{...}."""
@@ -25,7 +36,7 @@ class LaTeXReader:
       sections["full_document"] = self.raw_text
       return sections
 
-    for i, match in tqdm(enumerate(matches),desc="extract_sections",leave=False):
+    for i, match in enumerate(matches):
       sec_title = match.group(1).strip().lower()
       start_idx = match.end()
       end_idx = matches[i + 1].start() if i + 1 < len(matches) else len(self.raw_text)
@@ -38,21 +49,69 @@ class LaTeXReader:
     key = section_name.strip().lower()
     return self.sections.get(key)
 
-  def parse_structured_entries(self, section_name: str) -> List[Dict[str, Any]]:
-    """Parses a section (such as Education, Experience, or Projects) into structured items.
+  def parse_candidate_name(self) -> str:
+    """Extracts candidate name from \\author{} or prominent bold headers near the top."""
+    author_match = re.search(r"\\author\{([^}]+)\}", self.raw_text)
+    if author_match:
+      return self._clean_latex_syntax(author_match.group(1))
 
-    Each item is keyed by:
-      - 'title': Text inside the primary \\textbf{...}
-      - 'metadata': Subtitle, institution, or date line following the title before the itemize block
-      - 'bullet_points': List of items extracted from \\begin{itemize} ... \\end{itemize}
-    """
+    header_block = self.raw_text[:1500]
+    name_match = re.search(r"\\textbf\{\s*([A-Z][a-zA-Z\s]+)\s*\}", header_block)
+    if name_match:
+      return self._clean_latex_syntax(name_match.group(1))
+    return ""
+
+  def parse_contact_info(self) -> str:
+    """Extracts email, phone number, and LinkedIn/web links from the header/contact area."""
+    header_block = self.raw_text[:2000]
+    contacts = []
+
+    email_match = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", header_block)
+    if email_match:
+      contacts.append(email_match.group(0))
+
+    phone_match = re.search(r"(\+?[0-9\-\s\(\)]{7,15})", header_block)
+    if phone_match:
+      contacts.append(phone_match.group(0).strip())
+
+    linkedin_match = re.search(r"(?:linkedin\.com/in/[^\s}]+|\\href\{([^}]+linkedin[^\}]+)\})", header_block, re.IGNORECASE)
+    if linkedin_match:
+      url = linkedin_match.group(1) if linkedin_match.lastindex else linkedin_match.group(0)
+      contacts.append(self._clean_latex_syntax(url))
+
+    return " | ".join(contacts)
+
+  def parse_summary(self) -> List[str]:
+    """Extracts professional summaries or profile statements from matching sections."""
+    summaries = []
+    for sec_key, sec_val in self.sections.items():
+      if any(k in sec_key for k in ["summary", "profile", "objective", "about"]):
+        clean_text = self._clean_latex_syntax(sec_val)
+        if clean_text:
+          summaries.append(clean_text)
+    return summaries
+
+  def parse_structured_entries(self, section_name: str) -> List[Dict[str, Any]]:
     content = self.get_section_content(section_name)
     if not content:
       return []
 
-    # If the section uses a tabular or tabularx environment (e.g., Technical Skills), parse it as tabular data
     if "\\begin{tabular" in content:
       return self._parse_tabular_entries(content)
+
+    rsub_pattern = re.compile(r"\\begin\{rSubsection\}\{([^}]*)\}\{([^}]*)\}\{([^}]*)\}\{([^}]*)\}(.*?)\\end\{rSubsection\}", re.DOTALL)
+    rsub_matches = list(rsub_pattern.finditer(content))
+    if rsub_matches:
+      entries = []
+      for m in rsub_matches:
+        title, metadata, company, location, block_text = m.groups()
+        bullets = self._extract_bullets(block_text)
+        entries.append({
+            "title": self._clean_latex_syntax(title),
+            "metadata": f"{self._clean_latex_syntax(company)} - {self._clean_latex_syntax(location)} ({self._clean_latex_syntax(metadata)})".strip(" -()"),
+            "bullet_points": bullets
+        })
+      return entries
 
     entry_pattern = re.compile(r"\\textbf\{([^}]+)\}", re.IGNORECASE)
     matches = list(entry_pattern.finditer(content))
@@ -67,23 +126,35 @@ class LaTeXReader:
       end_idx = matches[i + 1].start() if i + 1 < len(matches) else len(content)
       
       block_text = content[start_idx:end_idx].strip()
-      
       bullet_points = self._extract_bullets(block_text)
       
-      metadata_text = re.sub(r"\\begin\{itemize\}.*?\\end\{itemize\}", "", block_text, flags=tr.DOTALL) if 'tr' in globals() else re.sub(r"\\begin\{itemize\}.*?\\end\{itemize\}", "", block_text, flags=re.DOTALL)
+      metadata_text = re.sub(r"\\begin\{itemize\}.*?\\end\{itemize\}", "", block_text, flags=re.DOTALL)
       metadata_text = re.sub(r"\\[a-zA-Z]+\*?(?:\{[^}]*\})?", "", metadata_text)
       metadata_text = " ".join(metadata_text.split()).strip()
 
       entries.append({
-          "title": title,
-          "metadata": metadata_text,
-          "bullet_points": bullet_points
+          "title": self._clean_latex_syntax(title),
+          "metadata": self._clean_institution_name(metadata_text),
+          "bullet_points": bullet_points,
+          "raw_block": block_text
       })
 
     return entries
 
+  def _clean_institution_name(self, text: str) -> str:
+    text = re.sub(r"^[\s,\-\%]+", "", text)
+    text = re.split(r"[%]", text)[0]
+    return " ".join(text.split()).strip()
+
+  def _extract_dates(self, text: str) -> tuple[str, str]:
+    """Extracts 'from' and 'to' dates from block or metadata text."""
+    date_pattern = re.compile(r'([A-Za-z]+\s+\d{4}|\d{4})\s*(?:–|--|-|to)\s*([A-Za-z]+\s+\d{4}|\d{4}|Present|Current)', re.IGNORECASE)
+    match = date_pattern.search(text)
+    if match:
+      return match.group(1).strip(), match.group(2).strip()
+    return "", ""
+
   def _parse_tabular_entries(self, content: str) -> List[Dict[str, Any]]:
-    """Parses tabular/tabularx environments into structured category-value entries."""
     tabular_pattern = re.compile(r"\\begin\{tabularx?\}(?:\{[^}]*\})*\{([^}]*\})(.*?)\\end\{tabularx?\}", re.DOTALL)
     matches = tabular_pattern.findall(content)
     
@@ -95,8 +166,6 @@ class LaTeXReader:
           parts = row.split("&", 1)
           category = self._clean_latex_syntax(parts[0])
           items_text = self._clean_latex_syntax(parts[1])
-          
-          # Split items by comma or bullet points if applicable
           items_list = [item.strip() for item in items_text.split(",") if item.strip()]
           
           if category:
@@ -109,35 +178,71 @@ class LaTeXReader:
     return entries if entries else [{"title": "Technical Skills", "metadata": "", "bullet_points": [content]}]
 
   def _extract_bullets(self, text: str) -> List[str]:
-    """Extracts all \\item contents from any \\begin{itemize} blocks within the text."""
     itemize_pattern = re.compile(r"\\begin\{itemize\}(.*?)\\end\{itemize\}", re.DOTALL)
     item_pattern = re.compile(r"\\item\s+(.*?)(?=\\item|\\end\{itemize\}|$)", re.DOTALL)
     
     bullets = []
-    itemize_matches = itemize_pattern.findall(text)
-    
-    for block in itemize_matches:
-      raw_items = item_pattern.findall(block)
-      for item in raw_items:
+    for block in itemize_pattern.findall(text):
+      for item in item_pattern.findall(block):
         cleaned = self._clean_latex_syntax(item)
         if cleaned:
           bullets.append(cleaned)
-          
     return bullets
 
   def _clean_latex_syntax(self, text: str) -> str:
-    """Removes or normalizes common LaTeX markup in text."""
     text = re.sub(r"\\textbf\{([^}]+)\}", r"\1", text)
     text = re.sub(r"\\href\{[^}]+\}\{([^}]+)\}", r"\1", text)
     text = re.sub(r"\\[a-zA-Z]+\*?(?:\{[^}]*\})?", "", text)
-    text = text.replace("\\%", "%").replace("\\&", "&")
-    return " ".join(text.split()).strip()
+    return text.replace("\\%", "%").replace("\\&", "&").replace("\\\\", " ").strip()
 
   def parse_education(self) -> List[Dict[str, Any]]:
-    return self.parse_structured_entries("education")
+    raw_edu = self.parse_structured_entries("education")
+    formatted_edu = []
+    
+    logging.info(f"Parsing education. Found {len(raw_edu)} raw entries.")
+    for edu in raw_edu:
+      title = edu.get("title", "")
+      metadata = edu.get("metadata", "")
+      raw_block = edu.get("raw_block", f"{title} {metadata}")
+      
+      combined_text = f"{title} {metadata} {raw_block}"
+      
+      matched_institution = ""
+      for uni in self.validator.universities:
+        if uni.lower() in combined_text.lower():
+          matched_institution = uni
+          break
+          
+      if not matched_institution:
+        for known_inst in ["Asian Institute of Technology", "Technological University"]:
+          if known_inst.lower() in combined_text.lower():
+            matched_institution = known_inst
+            break
+
+      is_valid = bool(matched_institution) or self.validator.isValidatedUniversity(metadata)
+      institution_name = matched_institution if matched_institution else self._clean_institution_name(metadata)
+
+      # Extract from and to dates
+      from_date, to_date = self._extract_dates(combined_text)
+
+      logging.info(f"Title: '{title}' | Inst: '{institution_name}' | From: '{from_date}' | To: '{to_date}' | IsValid: {is_valid}")
+
+      if is_valid and title and not any(kw in title.lower() for kw in ["coursework", "thesis", "specialization"]):
+        formatted_edu.append({
+            "degree": title,
+            "institution": institution_name,
+            "from": from_date,
+            "to": to_date,
+            "coursework": edu.get("bullet_points", []),
+            "thesis": ""
+        })
+      else:
+        logging.info(f"-> Skipped entry '{title}' (not a valid degree block or institution not found).")
+        
+    return formatted_edu
 
   def parse_experience(self) -> List[Dict[str, Any]]:
-    for key in ["professional experience", "experience"]:
+    for key in ["professional experience", "experience", "work experience", "employment"]:
       if key in self.sections:
         return self.parse_structured_entries(key)
     return []
@@ -152,4 +257,25 @@ class LaTeXReader:
     for key in ["technical skills", "skills"]:
       if key in self.sections:
         return self.parse_structured_entries(key)
+    return []
+
+  def parse_certificates(self) -> List[Dict[str, Any]]:
+    """Parses certificates directly from the respective section, ignoring raw comments."""
+    for key in ["certifications", "certification", "certificates", "certificate"]:
+      content = self.get_section_content(key)
+      if content:
+        entries = []
+        lines = re.split(r'\\\\\s*|\n', content)
+        for line in lines:
+          line_str = line.strip()
+          if not line_str or line_str.startswith('%'):
+            continue
+          cleaned = self._clean_latex_syntax(line_str)
+          if cleaned:
+            entries.append({
+                "title": cleaned,
+                "metadata": "",
+                "bullet_points": []
+            })
+        return entries
     return []

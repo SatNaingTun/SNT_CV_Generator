@@ -12,7 +12,7 @@ from latex_utils import (
 )
 from latex_writer import LaTeXWriter
 from llm_client import client
-from profile_manager import select_optimal_cv_file
+from cv_parser import select_optimal_cv_file
 from utils import (
     compile_latex_to_pdf,
     format_job_summary,

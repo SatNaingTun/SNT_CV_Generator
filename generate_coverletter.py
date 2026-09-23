@@ -14,7 +14,7 @@ from config import (
 from job_manager import get_or_cache_job_description
 from latex_utils import strip_section_headers
 from llm_client import client
-from profile_manager import select_optimal_cv_file
+from cv_parser import select_optimal_cv_file
 from utils import compile_latex_to_pdf, extract_text_from_file, get_job_description
 
 

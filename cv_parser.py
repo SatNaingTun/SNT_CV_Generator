@@ -5,7 +5,7 @@ import os
 import re
 import sys
 from typing import Any, Dict, List, Optional
-from config import CV_FOLDER, MODEL_NAME, OUTPUT_FOLDER, DB_NAME
+from config import CV_FOLDER, MODEL_NAME, OUTPUT_FOLDER, DB_NAME, DATA_FOLDER
 from db_manager import SQLiteCRUD
 from job_manager import load_job_history
 from latex_reader import LaTeXReader
@@ -26,7 +26,6 @@ except ImportError:
 
 def filter_tex_over_pdf(files: List[str]) -> List[str]:
   """Deduplicates files:
-
   1. Strips ' copy' artifacts from filenames.
   2. If both a .tex and .pdf exist for the same name, keeps ONLY the .tex file.
   """
@@ -53,11 +52,9 @@ def filter_tex_over_pdf(files: List[str]) -> List[str]:
 
   return sorted(deduped_files)
 
-def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]]:
-  """Deterministically parses a .tex CV file using LaTeXReader.
 
-  Returns a structured dictionary if successful; otherwise returns None.
-  """
+def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]]:
+  """Deterministically parses a .tex CV file entirely using LaTeXReader methods."""
   try:
     reader = LaTeXReader(raw_text)
     
@@ -65,9 +62,14 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
     experience = reader.parse_experience()
     projects = reader.parse_projects()
     skills = reader.parse_technical_skills()
+    certifications = reader.parse_certificates()
     
-    if not (education or experience or projects or skills):
+    if not (education or experience or projects or skills or certifications):
       return None
+
+    candidate_name = reader.parse_candidate_name()
+    contact_info = reader.parse_contact_info()
+    summaries = reader.parse_summary()
 
     tech_skills_dict = {}
     for skill_group in skills:
@@ -82,21 +84,9 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
         formatted_experience.append({
             "job_title": exp.get("title", ""),
             "company": exp.get("metadata", ""),
-            "from": "",
-            "to": "",
+            "from": exp.get("from", ""),
+            "to": exp.get("to", ""),
             "bullet_points": exp.get("bullet_points", [])
-        })
-
-    formatted_education = []
-    for edu in education:
-      if isinstance(edu, dict):
-        formatted_education.append({
-            "degree": edu.get("title", ""),
-            "institution": edu.get("metadata", ""),
-            "from": "",
-            "to": "",
-            "coursework": [],
-            "thesis": ""
         })
 
     formatted_projects = []
@@ -109,20 +99,31 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
             "details": proj.get("bullet_points", [])
         })
 
+    formatted_certifications = []
+    for cert in certifications:
+      if isinstance(cert, dict):
+        formatted_certifications.append({
+            "certificate_name": cert.get("title", ""),
+            "certificate_id": "",
+            "from": "",
+            "to": "",
+            "url": ""
+        })
+
     abs_path = os.path.abspath(filepath)
     filename = os.path.basename(filepath)
 
     return {
-        "candidate_name": "",
+        "candidate_name": candidate_name,
         "target_role": "",
-        "contact_info": "",
-        "summaries": [],
+        "contact_info": contact_info,
+        "summaries": summaries,
         "technical_skills": tech_skills_dict,
         "core_competencies": [],
         "work_experience": formatted_experience,
-        "education": formatted_education,
+        "education": education,  # Already validated and formatted inside LaTeXReader
         "projects": formatted_projects,
-        "certifications": [],
+        "certifications": formatted_certifications,
         "languages": [],
         "file_path": abs_path,
         "source_file": filename,
@@ -131,6 +132,7 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
             "experience_structured": experience,
             "projects_structured": projects,
             "skills_structured": skills,
+            "certifications_structured": certifications,
             "sections": reader.sections
         }
     }
@@ -139,7 +141,7 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
 
 
 def _parse_cv_with_llm(filepath: str, raw_text: str) -> Dict[str, Any]:
-  """Parses CV files (such as PDFs or unstructured TeX) using the LLM parser with safety checks."""
+  """Parses CV files (such as PDFs) using the LLM parser."""
   abs_path = os.path.abspath(filepath)
   filename = os.path.basename(filepath)
 
@@ -215,7 +217,6 @@ Preserve all rich details, full bullet points, exact dates, institutions, degree
     content_str = response.choices[0].message.content.strip()
     parsed = json.loads(content_str)
     
-    # Ensure parsed is a dictionary
     if not isinstance(parsed, dict):
       return {}
 
@@ -228,28 +229,28 @@ Preserve all rich details, full bullet points, exact dates, institutions, degree
 
 
 def parse_cv_file(filepath: str) -> Dict[str, Any]:
-  """Parses CV files natively via LaTeXReader if it's a valid .tex file;
-
-  otherwise falls back to LLM extraction. Skips LLM if native parsing succeeds.
-  """
+  """Parses CV files using native LaTeX extraction or LLM fallback."""
   try:
-    raw_text = extract_text_from_file(filepath)
+    with open(filepath, "r", encoding="utf-8") as f:
+      raw_text = f.read()
   except Exception:
-    return {}
+    try:
+      raw_text = extract_text_from_file(filepath)
+    except Exception:
+      return {}
 
   if not raw_text.strip():
     return {}
 
-  is_tex = filepath.endswith(".tex")
-
-  # 1. Try native deterministic parsing first for TeX files to avoid LLM calls
-  if is_tex:
+  if filepath.endswith(".tex"):
     native_result = _parse_tex_natively(filepath, raw_text)
     if native_result:
       return native_result
 
-  # 2. Fallback to LLM extraction for PDFs or unparseable text
-  return _parse_cv_with_llm(filepath, raw_text)
+  try:
+    return _parse_cv_with_llm(filepath, raw_text)
+  except Exception:
+    return {}
 
 
 def select_optimal_cv_file(cv_folder: str) -> Optional[str]:
@@ -311,8 +312,8 @@ def build_sqlite_master_profile(
     output_folder: str = OUTPUT_FOLDER,
     force_rebuild: bool = False,
 ) -> str:
-  """Scans all CV files, parses them using LaTeXReader/LLM, and populates SQLite DB."""
-  db_path = os.path.join(output_folder, DB_NAME)
+  """Scans all CV files, parses them, and populates SQLite DB."""
+  db_path = os.path.join(DATA_FOLDER, DB_NAME)
   db = SQLiteCRUD(db_path)
 
   raw_files = glob.glob(os.path.join(cv_folder, "*.tex")) + glob.glob(
@@ -327,7 +328,6 @@ def build_sqlite_master_profile(
   if force_rebuild:
     db.clear_all()
 
-  # Create the progress bar object
   pbar = tqdm(files, desc="Processing CV files", unit="file")
   
   for filepath in pbar:
@@ -335,7 +335,6 @@ def build_sqlite_master_profile(
       rel_path = os.path.basename(filepath)
       abs_path = os.path.abspath(filepath)
       
-      # Update the progress bar to show the current file on the right side
       pbar.set_postfix(file=rel_path)
 
       mtime = os.path.getmtime(filepath)
@@ -353,16 +352,14 @@ def build_sqlite_master_profile(
 
       db.upsert_scanned_file(rel_path, abs_path, mtime, formatted_date)
 
-      sections = ["summary", "education", "project", "certificate", "language", "skills"]
-      
-      # Optional: You can disable the inner progress bar or keep it. 
-      # Since we are showing the file in the outer loop, a silent inner loop might look cleaner, 
-      # but keeping it as-is works fine too!
-      for section in tqdm(sections, desc=f"   -> Inserting sections", leave=False):
+      sections = ["summary", "education", "experience", "project", "certificate", "language", "skills"]
+      for section in tqdm(sections, desc="   -> Inserting sections", leave=False):
         if section == "summary":
           db.store_summary_section(parsed_data, rel_path)
         elif section == "education":
           db.store_education_section(parsed_data)
+        elif section == "experience":
+          db.store_experience_section(parsed_data)
         elif section == "project":
           db.store_project_section(parsed_data)
         elif section == "certificate":
@@ -381,7 +378,7 @@ def build_sqlite_master_profile(
 
 
 def main():
-  """CLI entry point to scan CV folder and update the SQLite master database."""
+  """CLI entry point to scan CV folder and update SQLite database."""
   force_rebuild = "--force" in sys.argv or "-f" in sys.argv
 
   custom_folder = None

@@ -157,3 +157,8 @@ Thumbs.db
 
 output/*
 coverletter_templates/*.pdf
+data/profile.sqlite
+test_folder/*
+data/.fuse_hidden*
+data/profile.sqlite-shm
+data/profile.sqlite-wal

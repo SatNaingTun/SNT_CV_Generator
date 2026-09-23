@@ -180,6 +180,35 @@ class SQLiteCRUD:
         )
     self.conn.commit()
 
+  def store_experience_section(self, parsed_data: Dict[str, Any]):
+    """Stores work experience records uniquely for each candidate, 
+
+    handling distinct job titles, companies, date ranges, and bullet details.
+    """
+    cursor = self.conn.cursor()
+    candidate_name = parsed_data.get("candidate_name", "").strip()
+    
+    for exp in parsed_data.get("work_experience", []):
+      job_title = exp.get("job_title", "").strip()
+      company = exp.get("company", "").strip()
+      from_date = (exp.get("from", "") or exp.get("from_date", "") or exp.get("dates", "")).strip()
+      to_date = exp.get("to", "").strip()
+      
+      details_list = exp.get("bullet_points", []) or exp.get("details", [])
+      details_text = "\n".join(details_list) if isinstance(details_list, list) else str(details_list)
+      
+      if job_title or company:
+        cursor.execute(
+            """
+            INSERT INTO experience (candidate_name, job_title, company, "from", "to", details)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(candidate_name, job_title, company, "from", "to") DO UPDATE SET
+                details=excluded.details
+        """,
+            (candidate_name, job_title, company, from_date, to_date, details_text),
+        )
+    self.conn.commit()
+
   def store_project_section(self, parsed_data: Dict[str, Any]):
     cursor = self.conn.cursor()
     candidate_name = parsed_data.get("candidate_name", "").strip()

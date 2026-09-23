@@ -13,7 +13,7 @@ from config import (
 # Imports from existing modules
 from generate_cv import generate_tailored_cv
 from generate_coverletter import generate_tailored_coverletter
-from profile_manager import select_optimal_cv_file
+from cv_parser import select_optimal_cv_file
 from utils import extract_text_from_file, get_job_description
 
 
