@@ -39,3 +39,6 @@ SIMPLE_SECTIONS_TO_TAILOR = [
     "Technical Skills",
     "Selected Projects",
 ]
+
+# config.py
+enablelog = True

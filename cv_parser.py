@@ -62,9 +62,8 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
     experience = reader.parse_experience()
     projects = reader.parse_projects()
     skills = reader.parse_technical_skills()
-    certifications = reader.parse_certificates()
     
-    if not (education or experience or projects or skills or certifications):
+    if not (education or experience or projects or skills):
       return None
 
     candidate_name = reader.parse_candidate_name()
@@ -99,17 +98,6 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
             "details": proj.get("bullet_points", [])
         })
 
-    formatted_certifications = []
-    for cert in certifications:
-      if isinstance(cert, dict):
-        formatted_certifications.append({
-            "certificate_name": cert.get("title", ""),
-            "certificate_id": "",
-            "from": "",
-            "to": "",
-            "url": ""
-        })
-
     abs_path = os.path.abspath(filepath)
     filename = os.path.basename(filepath)
 
@@ -123,7 +111,7 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
         "work_experience": formatted_experience,
         "education": education,  # Already validated and formatted inside LaTeXReader
         "projects": formatted_projects,
-        "certifications": formatted_certifications,
+        "certifications": reader.parse_certificates(),
         "languages": [],
         "file_path": abs_path,
         "source_file": filename,
@@ -132,7 +120,6 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
             "experience_structured": experience,
             "projects_structured": projects,
             "skills_structured": skills,
-            "certifications_structured": certifications,
             "sections": reader.sections
         }
     }

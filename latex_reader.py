@@ -5,13 +5,13 @@ import os
 import pandas as pd
 import logging
 
-# Configure file logging
-logging.basicConfig(
-    filename="parser.log",
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
+from config import enablelog
+import logging
+
+# Optional: Configure basic logging if you prefer it over print statements
+if enablelog:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
 
 from university_validator import UniversityValidator
 
@@ -91,6 +91,14 @@ class LaTeXReader:
           summaries.append(clean_text)
     return summaries
 
+  def _extract_dates(self, text: str) -> tuple[str, str]:
+    """Extracts 'from' and 'to' dates from block or metadata text."""
+    date_pattern = re.compile(r'([A-Za-z]+\s+\d{4}|\d{4})\s*(?:–|--|-|to)\s*([A-Za-z]+\s+\d{4}|\d{4}|Present|Current)', re.IGNORECASE)
+    match = date_pattern.search(text)
+    if match:
+      return match.group(1).strip(), match.group(2).strip()
+    return "", ""
+
   def parse_structured_entries(self, section_name: str) -> List[Dict[str, Any]]:
     content = self.get_section_content(section_name)
     if not content:
@@ -106,9 +114,13 @@ class LaTeXReader:
       for m in rsub_matches:
         title, metadata, company, location, block_text = m.groups()
         bullets = self._extract_bullets(block_text)
+        combined_text = f"{title} {metadata} {company} {location} {block_text}"
+        from_date, to_date = self._extract_dates(combined_text)
         entries.append({
             "title": self._clean_latex_syntax(title),
             "metadata": f"{self._clean_latex_syntax(company)} - {self._clean_latex_syntax(location)} ({self._clean_latex_syntax(metadata)})".strip(" -()"),
+            "from": from_date,
+            "to": to_date,
             "bullet_points": bullets
         })
       return entries
@@ -117,7 +129,8 @@ class LaTeXReader:
     matches = list(entry_pattern.finditer(content))
 
     if not matches:
-      return [{"title": "General", "metadata": "", "bullet_points": self._extract_bullets(content)}]
+      from_date, to_date = self._extract_dates(content)
+      return [{"title": "General", "metadata": "", "from": from_date, "to": to_date, "bullet_points": self._extract_bullets(content)}]
 
     entries = []
     for i, match in enumerate(matches):
@@ -132,11 +145,15 @@ class LaTeXReader:
       metadata_text = re.sub(r"\\[a-zA-Z]+\*?(?:\{[^}]*\})?", "", metadata_text)
       metadata_text = " ".join(metadata_text.split()).strip()
 
+      combined_text = f"{title} {metadata_text} {block_text}"
+      from_date, to_date = self._extract_dates(combined_text)
+
       entries.append({
           "title": self._clean_latex_syntax(title),
           "metadata": self._clean_institution_name(metadata_text),
-          "bullet_points": bullet_points,
-          "raw_block": block_text
+          "from": from_date,
+          "to": to_date,
+          "bullet_points": bullet_points
       })
 
     return entries
@@ -145,14 +162,6 @@ class LaTeXReader:
     text = re.sub(r"^[\s,\-\%]+", "", text)
     text = re.split(r"[%]", text)[0]
     return " ".join(text.split()).strip()
-
-  def _extract_dates(self, text: str) -> tuple[str, str]:
-    """Extracts 'from' and 'to' dates from block or metadata text."""
-    date_pattern = re.compile(r'([A-Za-z]+\s+\d{4}|\d{4})\s*(?:–|--|-|to)\s*([A-Za-z]+\s+\d{4}|\d{4}|Present|Current)', re.IGNORECASE)
-    match = date_pattern.search(text)
-    if match:
-      return match.group(1).strip(), match.group(2).strip()
-    return "", ""
 
   def _parse_tabular_entries(self, content: str) -> List[Dict[str, Any]]:
     tabular_pattern = re.compile(r"\\begin\{tabularx?\}(?:\{[^}]*\})*\{([^}]*\})(.*?)\\end\{tabularx?\}", re.DOTALL)
@@ -172,10 +181,12 @@ class LaTeXReader:
             entries.append({
                 "title": category,
                 "metadata": "",
+                "from": "",
+                "to": "",
                 "bullet_points": items_list if items_list else [items_text]
             })
             
-    return entries if entries else [{"title": "Technical Skills", "metadata": "", "bullet_points": [content]}]
+    return entries if entries else [{"title": "Technical Skills", "metadata": "", "from": "", "to": "", "bullet_points": [content]}]
 
   def _extract_bullets(self, text: str) -> List[str]:
     itemize_pattern = re.compile(r"\\begin\{itemize\}(.*?)\\end\{itemize\}", re.DOTALL)
@@ -199,13 +210,13 @@ class LaTeXReader:
     raw_edu = self.parse_structured_entries("education")
     formatted_edu = []
     
-    logging.info(f"Parsing education. Found {len(raw_edu)} raw entries.")
+    
     for edu in raw_edu:
       title = edu.get("title", "")
       metadata = edu.get("metadata", "")
-      raw_block = edu.get("raw_block", f"{title} {metadata}")
-      
-      combined_text = f"{title} {metadata} {raw_block}"
+      from_date = edu.get("from", "")
+      to_date = edu.get("to", "")
+      combined_text = f"{title} {metadata}"
       
       matched_institution = ""
       for uni in self.validator.universities:
@@ -222,11 +233,7 @@ class LaTeXReader:
       is_valid = bool(matched_institution) or self.validator.isValidatedUniversity(metadata)
       institution_name = matched_institution if matched_institution else self._clean_institution_name(metadata)
 
-      # Extract from and to dates
-      from_date, to_date = self._extract_dates(combined_text)
-
-      logging.info(f"Title: '{title}' | Inst: '{institution_name}' | From: '{from_date}' | To: '{to_date}' | IsValid: {is_valid}")
-
+      
       if is_valid and title and not any(kw in title.lower() for kw in ["coursework", "thesis", "specialization"]):
         formatted_edu.append({
             "degree": title,
@@ -236,16 +243,47 @@ class LaTeXReader:
             "coursework": edu.get("bullet_points", []),
             "thesis": ""
         })
-      else:
-        logging.info(f"-> Skipped entry '{title}' (not a valid degree block or institution not found).")
+      # else:
+      #   if enablelog:
+      #     logging.info(f"-> Skipped entry '{title}' (not a valid degree block or institution not found).")
         
     return formatted_edu
 
+  def _clean_company_metadata(self, raw_metadata: str) -> str:
+    """Cleans raw metadata (like company/location/date strings) to isolate the pure company name."""
+    if not raw_metadata:
+      return ""
+    
+    # Remove date patterns (e.g., "Feb 2016 -- Jul 2024" or years)
+    cleaned = re.sub(r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}.*', '', raw_metadata, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\d{4}\s*(?:–|--|-|to).*', '', cleaned, flags=re.IGNORECASE)
+    
+    # Take the first segment before a city/country comma if applicable (e.g., "Best Oil Company, Mandalay, Myanmar")
+    parts = [p.strip() for p in cleaned.split(',')]
+    primary_name = parts[0] if parts else raw_metadata
+    
+    # Strip remaining leading/trailing punctuation or whitespace artifacts
+    return re.sub(r'^[\s,\-\%]+|[\s,\-\%]+$', '', primary_name).strip()
+  
   def parse_experience(self) -> List[Dict[str, Any]]:
+    raw_experience = []
     for key in ["professional experience", "experience", "work experience", "employment"]:
       if key in self.sections:
-        return self.parse_structured_entries(key)
-    return []
+        raw_experience = self.parse_structured_entries(key)
+        break
+        
+    formatted_experience = []
+    for exp in raw_experience:
+      cleaned_company = self._clean_company_metadata(exp.get("metadata", ""))
+      formatted_experience.append({
+          "title": exp.get("title", ""),
+          "metadata": cleaned_company,
+          "from": exp.get("from", ""),
+          "to": exp.get("to", ""),
+          "bullet_points": exp.get("bullet_points", [])
+      })
+      
+    return formatted_experience
 
   def parse_projects(self) -> List[Dict[str, Any]]:
     for key in ["projects", "selected projects", "data & systems projects"]:
@@ -260,7 +298,7 @@ class LaTeXReader:
     return []
 
   def parse_certificates(self) -> List[Dict[str, Any]]:
-    """Parses certificates directly from the respective section, ignoring raw comments."""
+    """Parses certificates directly from the respective section, extracting dates."""
     for key in ["certifications", "certification", "certificates", "certificate"]:
       content = self.get_section_content(key)
       if content:
@@ -270,11 +308,17 @@ class LaTeXReader:
           line_str = line.strip()
           if not line_str or line_str.startswith('%'):
             continue
+          
+          from_date, to_date = self._extract_dates(line_str)
           cleaned = self._clean_latex_syntax(line_str)
+          
           if cleaned:
             entries.append({
-                "title": cleaned,
-                "metadata": "",
+                "certificate_name": cleaned,
+                "certificate_id": "",
+                "from": from_date,
+                "to": to_date,
+                "url": "",
                 "bullet_points": []
             })
         return entries
