@@ -1,23 +1,17 @@
 import re
 from typing import Any, Dict, List, Optional
-from difflib import get_close_matches
-import os
-import pandas as pd
 import logging
+import calendar
+
 
 from config import enablelog
-import logging
-
-# Optional: Configure basic logging if you prefer it over print statements
 if enablelog:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
+  logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 from university_validator import UniversityValidator
 
 class LaTeXReader:
   """Specialized LaTeX CV Reader designed to parse structured sections
-
   and document metadata natively without comment stripping.
   """
 
@@ -25,9 +19,9 @@ class LaTeXReader:
     self.raw_text = raw_text
     self.sections = self._extract_sections()
     self.validator = UniversityValidator()
-
+    
   def _extract_sections(self) -> Dict[str, str]:
-    """Extracts top-level LaTeX sections based on \\section{...} or \\section*{...}."""
+    """Extracts top-level LaTeX sections based on \section{...} or \section*{...}."""
     section_pattern = re.compile(r"\\section\*?\{([^}]+)\}", re.IGNORECASE)
     matches = list(section_pattern.finditer(self.raw_text))
     
@@ -50,7 +44,6 @@ class LaTeXReader:
     return self.sections.get(key)
 
   def parse_candidate_name(self) -> str:
-    """Extracts candidate name from \\author{} or prominent bold headers near the top."""
     author_match = re.search(r"\\author\{([^}]+)\}", self.raw_text)
     if author_match:
       return self._clean_latex_syntax(author_match.group(1))
@@ -62,7 +55,6 @@ class LaTeXReader:
     return ""
 
   def parse_contact_info(self) -> str:
-    """Extracts email, phone number, and LinkedIn/web links from the header/contact area."""
     header_block = self.raw_text[:2000]
     contacts = []
 
@@ -82,7 +74,6 @@ class LaTeXReader:
     return " | ".join(contacts)
 
   def parse_summary(self) -> List[str]:
-    """Extracts professional summaries or profile statements from matching sections."""
     summaries = []
     for sec_key, sec_val in self.sections.items():
       if any(k in sec_key for k in ["summary", "profile", "objective", "about"]):
@@ -91,14 +82,109 @@ class LaTeXReader:
           summaries.append(clean_text)
     return summaries
 
-  def _extract_dates(self, text: str) -> tuple[str, str]:
-    """Extracts 'from' and 'to' dates from block or metadata text."""
-    date_pattern = re.compile(r'([A-Za-z]+\s+\d{4}|\d{4})\s*(?:–|--|-|to)\s*([A-Za-z]+\s+\d{4}|\d{4}|Present|Current)', re.IGNORECASE)
-    match = date_pattern.search(text)
-    if match:
-      return match.group(1).strip(), match.group(2).strip()
-    return "", ""
+  def _is_valid_month(self, month_str: str) -> bool:
+    full_months = {m.lower() for m in calendar.month_name[1:]}
+    abbrev_months = {m.lower() for m in calendar.month_abbr[1:]}
+    return month_str.lower() in full_months or month_str.lower() in abbrev_months
 
+  def _extract_dates(self, text: str) -> tuple[str, str]:
+    if not text:
+      return "", ""
+      
+    date_range_pattern = re.compile(
+        r'([A-Za-z]+\s+\d{4}|\d{4})\s*(?:–|--|-|to)\s*([A-Za-z]+\s+\d{4}|\d{4}|Present|Current)', 
+        re.IGNORECASE
+    )
+    match = date_range_pattern.search(text)
+    if not match:
+      return "", ""
+      
+    start_raw, end_raw = match.groups()
+    
+    def validate_and_format(date_str: str) -> str:
+      if date_str.lower() in ["present", "current"]:
+        return date_str.capitalize()
+        
+      parts = date_str.split()
+      if len(parts) == 2:
+        month_part, year_part = parts
+        if self._is_valid_month(month_part):
+          return f"{month_part} {year_part}"
+          
+      return date_str
+
+    return validate_and_format(start_raw), validate_and_format(end_raw)
+
+  
+
+  def _is_valid_location_name(self, text: str) -> bool:
+    """Lightning-fast check to ensure the token looks like a real location 
+    using a compact set of common global regions and pattern matching.
+    """
+    cleaned = text.strip().lower()
+    if not cleaned:
+      return False
+      
+    # Common global hubs, countries, and remote options
+    common_locations = {
+        "usa", "uk", "us", "united states", "united kingdom", "singapore", "thailand", 
+        "myanmar", "burma", "japan", "germany", "france", "canada", "australia", "china", 
+        "india", "vietnam", "malaysia", "indonesia", "philippines", "taiwan", "south korea",
+        "yangon", "mandalay", "bangkok", "tokyo", "london", "new york", "san francisco", 
+        "singapore", "remote", "hybrid", "onsite"
+    }
+    
+    if cleaned in common_locations:
+      return True
+      
+    # Check standard regional patterns like "City, State" (e.g., "San Francisco, CA") 
+    # or comma-separated country codes (e.g., "City, TH")
+    if re.search(r',\s*[A-Z]{2}$', text.strip()):
+      return True
+      
+    # If it contains common location terms or multiple words ending with a known country/state
+    parts = [p.strip().lower() for p in cleaned.split(',')]
+    if len(parts) > 1 and parts[-1] in common_locations:
+      return True
+      
+    return False
+
+  def _extract_metadata_intelligently(self, raw_metadata: str) -> Dict[str, str]:
+    """Intelligently cleans metadata, extracts dates, and separates 
+    Company Name and Location without date bleed.
+    """
+    if not raw_metadata:
+      return {"company": "", "location": "", "from": "", "to": ""}
+
+    cleaned_block = self._clean_latex_syntax(raw_metadata)
+    
+    # 1. Extract dates
+    from_date, to_date = self._extract_dates(raw_metadata)
+
+    # 2. Remove the extracted date substring from the raw block if present
+    date_range_pattern = re.compile(
+        r'([A-Za-z]+\s+\d{4}|\d{4})\s*(?:–|--|-|to)\s*([A-Za-z]+\s+\d{4}|\d{4}|Present|Current)', 
+        re.IGNORECASE
+    )
+    cleaned_block = date_range_pattern.sub('', cleaned_block)
+    
+    # Clean up remaining separators (\hfill, dashes, percentages, etc.)
+    cleaned_block = re.sub(r'\\hfill', ' ', cleaned_block)
+    cleaned_block = re.sub(r'%', '', cleaned_block)
+    
+    # 3. Split remaining chunks into Company and Location
+    chunks = [c.strip() for c in re.split(r'\\\\|\n|,|-', cleaned_block) if c.strip()]
+    
+    company_candidate = chunks[0] if chunks else ""
+    location_candidate = chunks[1] if len(chunks) > 1 else ""
+
+    return {
+        "company": company_candidate,
+        "location": location_candidate,
+        "from": from_date,
+        "to": to_date
+    }
+  
   def parse_structured_entries(self, section_name: str) -> List[Dict[str, Any]]:
     content = self.get_section_content(section_name)
     if not content:
@@ -142,7 +228,6 @@ class LaTeXReader:
       bullet_points = self._extract_bullets(block_text)
       
       metadata_text = re.sub(r"\\begin\{itemize\}.*?\\end\{itemize\}", "", block_text, flags=re.DOTALL)
-      metadata_text = re.sub(r"\\[a-zA-Z]+\*?(?:\{[^}]*\})?", "", metadata_text)
       metadata_text = " ".join(metadata_text.split()).strip()
 
       combined_text = f"{title} {metadata_text} {block_text}"
@@ -150,18 +235,13 @@ class LaTeXReader:
 
       entries.append({
           "title": self._clean_latex_syntax(title),
-          "metadata": self._clean_institution_name(metadata_text),
+          "metadata": metadata_text,
           "from": from_date,
           "to": to_date,
           "bullet_points": bullet_points
       })
 
     return entries
-
-  def _clean_institution_name(self, text: str) -> str:
-    text = re.sub(r"^[\s,\-\%]+", "", text)
-    text = re.split(r"[%]", text)[0]
-    return " ".join(text.split()).strip()
 
   def _parse_tabular_entries(self, content: str) -> List[Dict[str, Any]]:
     tabular_pattern = re.compile(r"\\begin\{tabularx?\}(?:\{[^}]*\})*\{([^}]*\})(.*?)\\end\{tabularx?\}", re.DOTALL)
@@ -210,7 +290,6 @@ class LaTeXReader:
     raw_edu = self.parse_structured_entries("education")
     formatted_edu = []
     
-    
     for edu in raw_edu:
       title = edu.get("title", "")
       metadata = edu.get("metadata", "")
@@ -233,7 +312,6 @@ class LaTeXReader:
       is_valid = bool(matched_institution) or self.validator.isValidatedUniversity(metadata)
       institution_name = matched_institution if matched_institution else self._clean_institution_name(metadata)
 
-      
       if is_valid and title and not any(kw in title.lower() for kw in ["coursework", "thesis", "specialization"]):
         formatted_edu.append({
             "degree": title,
@@ -243,27 +321,13 @@ class LaTeXReader:
             "coursework": edu.get("bullet_points", []),
             "thesis": ""
         })
-      # else:
-      #   if enablelog:
-      #     logging.info(f"-> Skipped entry '{title}' (not a valid degree block or institution not found).")
         
     return formatted_edu
 
-  def _clean_company_metadata(self, raw_metadata: str) -> str:
-    """Cleans raw metadata (like company/location/date strings) to isolate the pure company name."""
-    if not raw_metadata:
-      return ""
-    
-    # Remove date patterns (e.g., "Feb 2016 -- Jul 2024" or years)
-    cleaned = re.sub(r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}.*', '', raw_metadata, flags=re.IGNORECASE)
-    cleaned = re.sub(r'\d{4}\s*(?:–|--|-|to).*', '', cleaned, flags=re.IGNORECASE)
-    
-    # Take the first segment before a city/country comma if applicable (e.g., "Best Oil Company, Mandalay, Myanmar")
-    parts = [p.strip() for p in cleaned.split(',')]
-    primary_name = parts[0] if parts else raw_metadata
-    
-    # Strip remaining leading/trailing punctuation or whitespace artifacts
-    return re.sub(r'^[\s,\-\%]+|[\s,\-\%]+$', '', primary_name).strip()
+  def _clean_institution_name(self, text: str) -> str:
+    text = re.sub(r"^[\s,\-\%]+", "", text)
+    text = re.split(r"[%]", text)[0]
+    return " ".join(text.split()).strip()
   
   def parse_experience(self) -> List[Dict[str, Any]]:
     raw_experience = []
@@ -272,19 +336,32 @@ class LaTeXReader:
         raw_experience = self.parse_structured_entries(key)
         break
         
+    ignored_titles = {"key achievements", "summary", "responsibilities", "skills", "overview"}
+    
     formatted_experience = []
     for exp in raw_experience:
-      cleaned_company = self._clean_company_metadata(exp.get("metadata", ""))
+      title = exp.get("title", "").strip()
+      
+      # Skip non-job header blocks
+      if not title or title.lower() in ignored_titles:
+        continue
+        
+      meta_info = self._extract_metadata_intelligently(exp.get("metadata", ""))
+      
+      from_date = exp.get("from") or meta_info["from"]
+      to_date = exp.get("to") or meta_info["to"]
+
       formatted_experience.append({
-          "title": exp.get("title", ""),
-          "metadata": cleaned_company,
-          "from": exp.get("from", ""),
-          "to": exp.get("to", ""),
+          "title": title,
+          "metadata": meta_info["company"],
+          "location": meta_info["location"],
+          "from": from_date,
+          "to": to_date,
           "bullet_points": exp.get("bullet_points", [])
       })
       
     return formatted_experience
-
+  
   def parse_projects(self) -> List[Dict[str, Any]]:
     for key in ["projects", "selected projects", "data & systems projects"]:
       if key in self.sections:
@@ -298,28 +375,65 @@ class LaTeXReader:
     return []
 
   def parse_certificates(self) -> List[Dict[str, Any]]:
-    """Parses certificates directly from the respective section, extracting dates."""
     for key in ["certifications", "certification", "certificates", "certificate"]:
       content = self.get_section_content(key)
       if content:
         entries = []
         lines = re.split(r'\\\\\s*|\n', content)
+        
+        # Ignored LaTeX artifacts or unwanted text headers
+        ignored_tokens = {"[leftmargin=*", "certificates", "certifications", "skills"}
+        
+        for line in lines:
+          line_str = line.strip()
+          if not line_str or line_str.startswith('%'):
+            continue
+            
+          # Clean LaTeX syntax first to check its true value
+          cleaned = self._clean_latex_syntax(line_str)
+          
+          # Skip structural LaTeX elements or headers
+          if not cleaned or any(cleaned.lower().startswith(token) for token in ignored_tokens):
+            continue
+          
+          from_date, to_date = self._extract_dates(line_str)
+          
+          entries.append({
+              "certificate_name": cleaned,
+              "certificate_id": "",
+              "from": from_date,
+              "to": to_date,
+              "url": "",
+              "bullet_points": []
+          })
+        return entries
+    return []
+
+  def parse_languages(self) -> List[str]:
+    """Parses the languages section into a clean list of language proficiencies."""
+    for key in ["languages", "language"]:
+      content = self.get_section_content(key)
+      if content:
+        languages = []
+        lines = re.split(r'\\\\\s*|\n', content)
+        ignored_tokens = {"[leftmargin=*", "languages", "language"}
+        
         for line in lines:
           line_str = line.strip()
           if not line_str or line_str.startswith('%'):
             continue
           
-          from_date, to_date = self._extract_dates(line_str)
           cleaned = self._clean_latex_syntax(line_str)
-          
-          if cleaned:
-            entries.append({
-                "certificate_name": cleaned,
-                "certificate_id": "",
-                "from": from_date,
-                "to": to_date,
-                "url": "",
-                "bullet_points": []
-            })
-        return entries
+          if cleaned and not any(cleaned.lower().startswith(token) for token in ignored_tokens):
+            languages.append(cleaned)
+        return languages
+    return []
+
+  def parse_core_competencies(self) -> List[str]:
+    """Parses the core competencies section into a clean list of competencies."""
+    for key in ["core competencies", "competencies", "key competencies"]:
+      content = self.get_section_content(key)
+      if content:
+        # Core competencies are usually standard itemize lists
+        return self._extract_bullets(content)
     return []
