@@ -111,15 +111,15 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
         "languages": languages,                   # Added languages list
         "file_path": abs_path,
         "source_file": filename,
-        "latex_granular": {
-            "education_structured": education,
-            "experience_structured": experience,
-            "projects_structured": projects,
-            "skills_structured": skills,
-            "core_competencies": core_competencies,
-            "languages": languages,
-            "sections": reader.sections
-        }
+        # "latex_granular": {
+        #     "education_structured": education,
+        #     "experience_structured": experience,
+        #     "projects_structured": projects,
+        #     "skills_structured": skills,
+        #     "core_competencies": core_competencies,
+        #     "languages": languages,
+        #     "sections": reader.sections
+        # }
     }
   except Exception:
     return None

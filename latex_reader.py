@@ -320,41 +320,80 @@ class LaTeXReader:
     return text.strip()
 
   def parse_education(self) -> List[Dict[str, Any]]:
-    raw_edu = self.parse_structured_entries("education")
-    formatted_edu = []
-    
-    for edu in raw_edu:
-      title = edu.get("title", "")
-      metadata = edu.get("metadata", "")
-      from_date = edu.get("from", "")
-      to_date = edu.get("to", "")
-      combined_text = f"{title} {metadata}"
-      
-      matched_institution = ""
-      for uni in self.validator.universities:
-        if uni.lower() in combined_text.lower():
-          matched_institution = uni
+    """Parses education sections, correctly handling nested coursework and thesis blocks."""
+    content = self.get_section_content("education")
+    if not content:
+      # Fallback if section getter uses different naming
+      for sec in self.sections:
+        if "education" in sec.lower():
+          content = self.sections[sec]
           break
-          
-      if not matched_institution:
-        for known_inst in ["Asian Institute of Technology", "Technological University"]:
-          if known_inst.lower() in combined_text.lower():
-            matched_institution = known_inst
+    if not content:
+      return []
+
+    # Split education content by degree blocks starting with \textbf{Master...} or \textbf{Bachelor...}
+    degree_blocks = re.split(r"(?=\\textbf\{(?:Master|Bachelor)[^}]+\})", content)
+    formatted_edu = []
+
+    for block in degree_blocks:
+      if not block.strip() or "Education" in block and len(block.strip()) < 15:
+        continue
+
+      # Extract Degree Title
+      deg_match = re.search(r"\\textbf\{((?:Master|Bachelor)[^}]+)\}", block)
+      if not deg_match:
+        continue
+      degree = deg_match.group(1).strip()
+
+      # Extract Institution Name
+      institution = ""
+      if "Asian Institute of Technology" in block:
+        institution = "Asian Institute of Technology"
+      elif "Technological University" in block:
+        institution = "Technological University (Mandalay)"
+      else:
+        # Fallback: line after degree/hfill
+        lines = [l.strip() for l in block.split("\n") if l.strip()]
+        for i, l in enumerate(lines):
+          if degree in l and i + 1 < len(lines):
+            institution = re.sub(r"\\.*", "", lines[i + 1]).strip()
             break
 
-      is_valid = bool(matched_institution) or self.validator.isValidatedUniversity(metadata)
-      institution_name = matched_institution if matched_institution else self._clean_institution_name(metadata)
+      # Extract Dates
+      date_match = re.search(r"([A-Za-z]+\s+\d{4}\s*(?:--|–|-)\s*(?:Present|[A-Za-z]+\s+\d{4}))", block)
+      from_date, to_date = "", ""
+      if date_match:
+        dates = date_match.group(1)
+        for sep in ["--", "–", "-"]:
+          if sep in dates:
+            parts = dates.split(sep)
+            from_date, to_date = parts[0].strip(), parts[1].strip()
+            break
 
-      if is_valid and title and not any(kw in title.lower() for kw in ["coursework", "thesis", "specialization"]):
-        formatted_edu.append({
-            "degree": title,
-            "institution": institution_name,
-            "from": from_date,
-            "to": to_date,
-            "coursework": edu.get("bullet_points", []),
-            "thesis": ""
-        })
-        
+      # Extract Coursework items
+      coursework = []
+      cw_match = re.search(r"(?:Relevant\s+)?Coursework\}\s*[:\-]?\s*([^\n\\]+)", block, re.IGNORECASE)
+      if cw_match:
+        raw_cw = cw_match.group(1).strip()
+        coursework = [c.strip() for c in raw_cw.split(",") if c.strip()]
+
+      # Extract Thesis
+      thesis = ""
+      th_match = re.search(r"Thesis[^\}]*\}\s*[:\-]?\s*([^\n\\]+)", block, re.IGNORECASE)
+      if th_match:
+        thesis = th_match.group(1).strip()
+        # Clean comment characters if any
+        thesis = re.sub(r"^%\s*", "", thesis).strip()
+
+      formatted_edu.append({
+          "degree": degree,
+          "institution": institution,
+          "from": from_date,
+          "to": to_date,
+          "coursework": coursework,
+          "thesis": thesis
+      })
+
     return formatted_edu
 
   def _clean_institution_name(self, text: str) -> str:
@@ -375,7 +414,6 @@ class LaTeXReader:
     for exp in raw_experience:
       title = exp.get("title", "").strip()
       
-      # Skip non-job header blocks
       if not title or title.lower() in ignored_titles:
         continue
         
@@ -385,7 +423,7 @@ class LaTeXReader:
       to_date = exp.get("to") or meta_info["to"]
 
       formatted_experience.append({
-          "title": title,
+          "job_title": title,  # <--- Added job_title key for compatibility
           "company": meta_info["company"],
           "location": meta_info["location"],
           "from": from_date,

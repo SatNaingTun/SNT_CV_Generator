@@ -40,5 +40,8 @@ SIMPLE_SECTIONS_TO_TAILOR = [
     "Selected Projects",
 ]
 
+# Choose your preferred resume format: "ats" or "snt"
+RESUME_FORMAT = "snt"
+
 # config.py
 enablelog = True
