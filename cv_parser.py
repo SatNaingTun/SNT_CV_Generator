@@ -279,13 +279,92 @@ Choose the best matching template file name.
 
   return files[0]
 
+def normalize_project_name(name: str) -> str:
+  """Normalizes project names using regex to strip parentheticals, colons, hyphens, and standardize spacing."""
+  if not name:
+    return ""
+  # Remove parentheticals like (C#/.NET Application)
+  cleaned = re.sub(r'\s*\(.*?\)', '', name)
+  # Standardize all separators (hyphens, colons, underscores) and spaces
+  cleaned = re.sub(r'[\s\-_:]+', ' ', cleaned).strip().lower()
+  return cleaned
+
+
+def deduplicate_and_merge_projects_deterministically(
+    newly_scanned_projects: List[Dict[str, Any]], db_instance: Any = None
+) -> List[Dict[str, Any]]:
+  """Decoupled helper that queries existing projects from the database, combines them with newly scanned projects, normalizes names via regex, and merges them deterministically without LLM calls."""
+  
+  # 1. Query existing database projects inside this decoupled function
+  existing_db_projects = []
+  if db_instance:
+    try:
+      existing_db_projects = db_instance.get_projects() or []
+    except Exception:
+      existing_db_projects = []
+
+  # 2. Combine pools
+  combined_project_pool = list(existing_db_projects) + list(newly_scanned_projects)
+  if not combined_project_pool:
+    return []
+
+  # 3. Group and normalize using regex keys (handling variants like PLC-Connect vs PLC Connect)
+  grouped = {}
+  for proj in combined_project_pool:
+    name = proj.get("project_name", "").strip()
+    norm_key = normalize_project_name(name)
+    if not norm_key:
+      continue
+    if norm_key not in grouped:
+      grouped[norm_key] = []
+    grouped[norm_key].append(proj)
+
+  merged_projects = []
+  
+  pbar = tqdm(grouped.items(), desc="Merging project variants (Decoupled)")
+  for norm_key, group in pbar:
+    best_name = max((p.get("project_name", "") for p in group), key=len)
+    best_dates = max((p.get("dates", "") for p in group), key=len)
+    
+    pbar.set_postfix(current=best_name)
+
+    # Combine and deduplicate tech stack items
+    combined_tech = []
+    seen_tech = set()
+    for p in group:
+      for tech in p.get("tech_stack", []):
+        tech_clean = tech.strip()
+        if tech_clean.lower() not in seen_tech:
+          seen_tech.add(tech_clean.lower())
+          combined_tech.append(tech_clean)
+
+    # Combine and deduplicate detail bullet points
+    combined_details = []
+    seen_details = set()
+    for p in group:
+      for detail in p.get("details", []):
+        detail_clean = detail.strip()
+        detail_key = re.sub(r'\s+', ' ', detail_clean).lower()
+        if detail_key not in seen_details:
+          seen_details.add(detail_key)
+          combined_details.append(detail_clean)
+
+    merged_projects.append({
+        "project_name": best_name,
+        "dates": best_dates,
+        "tech_stack": combined_tech,
+        "details": combined_details
+    })
+
+  return merged_projects
+
 
 def build_sqlite_master_profile(
     cv_folder: str = CV_FOLDER,
     output_folder: str = OUTPUT_FOLDER,
     force_rebuild: bool = False,
 ) -> str:
-  """Scans all CV files, parses them, and populates SQLite DB."""
+  """Scans CV files, delegates project querying and regex deduplication to the decoupled function, and populates SQLite DB."""
   db_path = os.path.join(DATA_FOLDER, DB_NAME)
   db = SQLiteCRUD(db_path)
 
@@ -302,6 +381,7 @@ def build_sqlite_master_profile(
     db.clear_all()
 
   pbar = tqdm(files, desc="Processing CV files", unit="file")
+  all_parsed_profiles = []
   
   for filepath in pbar:
     try:
@@ -317,16 +397,18 @@ def build_sqlite_master_profile(
 
       stored_mtime = db.get_file_mtime(rel_path)
       if stored_mtime is not None and not force_rebuild and stored_mtime == mtime:
-        continue
+        pass
 
       parsed_data = parse_cv_file(abs_path)
       if not parsed_data:
         continue
 
       db.upsert_scanned_file(rel_path, abs_path, mtime, formatted_date)
+      all_parsed_profiles.append((parsed_data, rel_path))
 
-      sections = ["contact_info", "summary", "education", "experience", "project", "certificate", "language", "skills", "core_competencies"]
-      for section in tqdm(sections, desc="   -> Inserting sections", leave=False):
+      # Store sections except projects for now
+      sections = ["contact_info", "summary", "education", "experience", "certificate", "language", "skills", "core_competencies"]
+      for section in tqdm(sections, desc=f"   -> Inserting sections for {rel_path}", leave=False):
         if section == "contact_info":
           db.store_contact_info(parsed_data)
         elif section == "summary":
@@ -335,8 +417,6 @@ def build_sqlite_master_profile(
           db.store_education_section(parsed_data)
         elif section == "experience":
           db.store_experience_section(parsed_data)
-        elif section == "project":
-          db.store_projects_section(parsed_data)
         elif section == "certificate":
           db.store_certificate_section(parsed_data)
         elif section == "language":
@@ -349,6 +429,43 @@ def build_sqlite_master_profile(
     except Exception as e:
       print(f"\n[!] Error processing file {filepath}: {e}")
       continue
+
+  # Gather newly scanned projects from parsed files
+  newly_scanned_projects = []
+  for parsed_data, _ in all_parsed_profiles:
+    newly_scanned_projects.extend(parsed_data.get("projects", []))
+
+  if newly_scanned_projects or not force_rebuild:
+    # Pass db to the decoupled function so it queries existing records internally
+    db_instance_arg = None if force_rebuild else db
+    unified_projects = deduplicate_and_merge_projects_deterministically(newly_scanned_projects, db_instance_arg)
+    
+    if unified_projects:
+      # Dynamically extract candidate name from contact_info without hardcoding
+      candidate_name = None
+      for parsed_data, _ in all_parsed_profiles:
+        contact_info = parsed_data.get("contact_info", {})
+        if isinstance(contact_info, dict):
+          candidate_name = contact_info.get("candidate_name") or contact_info.get("name")
+        if not candidate_name:
+          candidate_name = parsed_data.get("candidate_name")
+        if candidate_name:
+          break
+          
+      if not candidate_name:
+        candidate_name = "Unknown Candidate"
+
+      # Clear existing projects table and store the cleanly merged set
+      cursor = db.conn.cursor()
+      cursor.execute("DELETE FROM projects")
+      db.conn.commit()
+
+      dummy_parsed = {
+          "candidate_name": candidate_name,
+          "projects": unified_projects
+      }
+      db.store_projects_section(dummy_parsed)
+      print(f"[+] Successfully stored {len(unified_projects)} deduplicated projects for {candidate_name} into SQLite.")
 
   db.close()
   return db_path

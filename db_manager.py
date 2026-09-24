@@ -1,6 +1,9 @@
 import os
+import re
+import re
 import sqlite3
 from typing import Any, Dict, List, Optional
+import json
 
 
 class SQLiteCRUD:
@@ -196,34 +199,51 @@ class SQLiteCRUD:
 
   
 
-  def store_projects_section(self, parsed_data: Dict[str, Any]):
-    cursor = self.conn.cursor()
-    candidate_name = parsed_data.get("candidate_name", "").strip()
-    
-    for proj in parsed_data.get("projects", []):
-      if isinstance(proj, dict):
-        project_name = proj.get("project_name", "").strip()
-        tech_stack = proj.get("tech_stack", "")
-        if isinstance(tech_stack, list):
-          import json
-          tech_stack = json.dumps(tech_stack)
-          
-        details = proj.get("details", "")
-        if isinstance(details, list):
-          import json
-          details = json.dumps(details)
+  def store_projects_section(self, parsed_data: dict):
+    """Stores projects in SQLite, ensuring normalized duplicates are updated or merged rather than duplicated."""
+    projects = parsed_data.get("projects", [])
+    if not projects:
+        return
 
-        if project_name:
-          cursor.execute(
-              """
-              INSERT INTO projects (candidate_name, project_name, tech_stack, details)
-              VALUES (?, ?, ?, ?)
-              ON CONFLICT(candidate_name, project_name) DO UPDATE SET
-                  tech_stack=excluded.tech_stack,
-                  details=excluded.details
-          """,
-              (candidate_name, project_name, tech_stack, details),
-          )
+    cursor = self.conn.cursor()
+    
+    for proj in projects:
+        name = proj.get("project_name", "").strip()
+        tech_stack = json.dumps(proj.get("tech_stack", []))
+        details = json.dumps(proj.get("details", []))
+        
+        # Create a normalized key for duplicate detection (stripping parentheticals & special symbols)
+        norm_name = re.sub(r'\s*\(.*?\)', '', name)
+        norm_name = re.sub(r'[\s\-_:]+', ' ', norm_name).strip().lower()
+
+        # Check if a project with a matching normalized name already exists in the DB
+        cursor.execute("SELECT id, project_name, details, tech_stack FROM projects")
+        existing_rows = cursor.fetchall()
+        
+        matched_id = None
+        for row in existing_rows:
+            db_id, db_name, db_details, db_tech = row
+            db_norm = re.sub(r'\s*\(.*?\)', '', db_name)
+            db_norm = re.sub(r'[\s\-_:]+', ' ', db_norm).strip().lower()
+            
+            if norm_name == db_norm:
+                matched_id = db_id
+                break
+
+        if matched_id:
+            # If it exists, update/merge with the record
+            cursor.execute("""
+                UPDATE projects 
+                SET project_name = ?, tech_stack = ?, details = ?
+                WHERE id = ?
+            """, (name, tech_stack, details, matched_id))
+        else:
+            # Otherwise, insert as a new unique project
+            cursor.execute("""
+                INSERT INTO projects (project_name, tech_stack, details)
+                VALUES (?, ?, ?)
+            """, (name, tech_stack, details))
+            
     self.conn.commit()
 
   def store_certificate_section(self, parsed_data: Dict[str, Any]):
