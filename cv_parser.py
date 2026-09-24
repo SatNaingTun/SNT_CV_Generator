@@ -81,26 +81,18 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
         items = skill_group.get("bullet_points", [])
         tech_skills_dict[category] = items
 
-    formatted_experience = []
-    for exp in experience:
-      if isinstance(exp, dict):
-        formatted_experience.append({
-            "job_title": exp.get("title", ""),
-            "company": exp.get("metadata", ""),
-            "from": exp.get("from", ""),
-            "to": exp.get("to", ""),
-            "bullet_points": exp.get("bullet_points", [])
-        })
-
-    # formatted_projects = []
-    # for proj in projects:
-    #   if isinstance(proj, dict):
-    #     formatted_projects.append({
-    #         "project_name": proj.get("title", ""),
-    #         "dates": proj.get("metadata", ""),
-    #         "tech_stack": [],
-    #         "details": proj.get("bullet_points", [])
+    # formatted_experience = []
+    # for exp in experience:
+    #   if isinstance(exp, dict):
+    #     formatted_experience.append({
+    #         "job_title": exp.get("title", ""),
+    #         "company": exp.get("metadata", ""),
+    #         "from": exp.get("from", ""),
+    #         "to": exp.get("to", ""),
+    #         "bullet_points": exp.get("bullet_points", [])
     #     })
+
+    
     certifications = reader.parse_certificates()
     abs_path = os.path.abspath(filepath)
     filename = os.path.basename(filepath)
@@ -112,7 +104,7 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
         "summaries": summaries,
         "technical_skills": tech_skills_dict,
         "core_competencies": core_competencies,  # Added core competencies
-        "work_experience": formatted_experience,
+        "work_experience": experience,
         "education": education,
         "projects": projects,
         "certifications": certifications,

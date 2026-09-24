@@ -362,7 +362,7 @@ class LaTeXReader:
 
       formatted_experience.append({
           "title": title,
-          "metadata": meta_info["company"],
+          "company": meta_info["company"],
           "location": meta_info["location"],
           "from": from_date,
           "to": to_date,
