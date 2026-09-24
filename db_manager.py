@@ -75,10 +75,13 @@ class SQLiteCRUD:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             candidate_name TEXT,
             certificate_name TEXT,
+            issuing_organization TEXT,
             certificate_id TEXT,
             "from" TEXT,
             "to" TEXT,
             url TEXT,
+            skills TEXT,
+            media_picture TEXT,
             UNIQUE(candidate_name, certificate_name)
         );
 
@@ -206,31 +209,37 @@ class SQLiteCRUD:
     cursor = self.conn.cursor()
     candidate_name = parsed_data.get("candidate_name", "").strip()
     for cert in parsed_data.get("certifications", []):
-      if isinstance(cert, str):
-        cert_name = cert.strip()
-        cert_id, from_date, to_date, url = "", "", "", ""
-      elif isinstance(cert, dict):
+      if isinstance(cert, dict):
         cert_name = cert.get("certificate_name", "").strip()
+        issuing_org = cert.get("issuing_organization", "").strip()
         cert_id = cert.get("certificate_id", "").strip()
-        from_date = (cert.get("from", "") or cert.get("from_date", "") or cert.get("date", "")).strip()
+        from_date = cert.get("from", "").strip()
         to_date = cert.get("to", "").strip()
         url = cert.get("url", "").strip()
-      else:
-        continue
+        
+        import json
+        skills = json.dumps(cert.get("skills", []))
+        media_picture = cert.get("media_picture", "").strip()
 
-      if cert_name:
-        cursor.execute(
-            """
-            INSERT INTO certifications (candidate_name, certificate_name, certificate_id, "from", "to", url)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(candidate_name, certificate_name) DO UPDATE SET
-                certificate_id=excluded.certificate_id,
-                "from"=excluded."from",
-                "to"=excluded."to",
-                url=excluded.url
-        """,
-            (candidate_name, cert_name, cert_id, from_date, to_date, url),
-        )
+        if cert_name:
+          cursor.execute(
+              """
+              INSERT INTO certifications (
+                  candidate_name, certificate_name, issuing_organization, 
+                  certificate_id, "from", "to", url, skills, media_picture
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(candidate_name, certificate_name) DO UPDATE SET
+                  issuing_organization=excluded.issuing_organization,
+                  certificate_id=excluded.certificate_id,
+                  "from"=excluded."from",
+                  "to"=excluded."to",
+                  url=excluded.url,
+                  skills=excluded.skills,
+                  media_picture=excluded.media_picture
+          """,
+              (candidate_name, cert_name, issuing_org, cert_id, from_date, to_date, url, skills, media_picture),
+          )
     self.conn.commit()
 
   def store_language_section(self, parsed_data: Dict[str, Any]):
@@ -249,12 +258,32 @@ class SQLiteCRUD:
         )
     self.conn.commit()
 
+  def store_core_competencies_section(self, parsed_data: Dict[str, Any], source_file: str):
+    """Stores core competencies in a dedicated table, completely separate from technical skills."""
+    cursor = self.conn.cursor()
+    candidate_name = parsed_data.get("candidate_name", "").strip()
+    target_role = parsed_data.get("target_role", "").strip() or candidate_name
+
+    core_comp = parsed_data.get("core_competencies", [])
+    if core_comp:
+      comp_str = ", ".join(core_comp) if isinstance(core_comp, list) else str(core_comp)
+      cursor.execute(
+          """
+          INSERT INTO core_competencies (candidate_name, target_role, source_file, competencies)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(target_role, source_file) DO UPDATE SET
+              candidate_name=excluded.candidate_name,
+              competencies=excluded.competencies
+      """,
+          (candidate_name, target_role, source_file, comp_str),
+      )
+      self.conn.commit()
+
   def store_skills_section(self, parsed_data: Dict[str, Any], source_file: str):
     cursor = self.conn.cursor()
     candidate_name = parsed_data.get("candidate_name", "").strip()
     target_role = parsed_data.get("target_role", "").strip() or candidate_name
 
-    # 1. Technical Skills (Stored category-wise, skills comma-separated)
     tech_skills = parsed_data.get("technical_skills", {})
     if isinstance(tech_skills, dict):
       for category, skills in tech_skills.items():
@@ -269,22 +298,6 @@ class SQLiteCRUD:
         """,
             (candidate_name, target_role, source_file, category, skills_str),
         )
-
-    # 2. Core Competencies (Stored comma-separated text)
-    core_comp = parsed_data.get("core_competencies", [])
-    if core_comp:
-      comp_str = ", ".join(core_comp) if isinstance(core_comp, list) else str(core_comp)
-      cursor.execute(
-          """
-          INSERT INTO core_competencies (candidate_name, target_role, source_file, competencies)
-          VALUES (?, ?, ?, ?)
-          ON CONFLICT(target_role, source_file) DO UPDATE SET
-              candidate_name=excluded.candidate_name,
-              competencies=excluded.competencies
-      """,
-          (candidate_name, target_role, source_file, comp_str),
-      )
-
     self.conn.commit()
 
   def clear_all(self):

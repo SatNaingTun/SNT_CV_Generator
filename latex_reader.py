@@ -74,13 +74,22 @@ class LaTeXReader:
     return " | ".join(contacts)
 
   def parse_summary(self) -> List[str]:
-    summaries = []
-    for sec_key, sec_val in self.sections.items():
-      if any(k in sec_key for k in ["summary", "profile", "objective", "about"]):
-        clean_text = self._clean_latex_syntax(sec_val)
-        if clean_text:
-          summaries.append(clean_text)
-    return summaries
+    """Extracts summary text while filtering out comments and LaTeX artifacts."""
+    for key in ["professional summary", "summary", "profile"]:
+      content = self.get_section_content(key)
+      if content:
+        lines = content.split('\n')
+        cleaned_lines = []
+        for line in lines:
+          line_str = line.strip()
+          # Skip comment lines or rule separators
+          if not line_str or line_str.startswith('%') or '---' in line_str:
+            continue
+          cleaned_lines.append(line_str)
+        
+        if cleaned_lines:
+          return [" ".join(cleaned_lines)]
+    return []
 
   def _is_valid_month(self, month_str: str) -> bool:
     full_months = {m.lower() for m in calendar.month_name[1:]}
@@ -363,25 +372,75 @@ class LaTeXReader:
     return formatted_experience
   
   def parse_projects(self) -> List[Dict[str, Any]]:
-    for key in ["projects", "selected projects", "data & systems projects"]:
-      if key in self.sections:
-        return self.parse_structured_entries(key)
+    """Parses selected projects, separating titles and cleaning list tags/artifacts."""
+    for key in ["projects", "selected projects", "project"]:
+      content = self.get_section_content(key)
+      if content:
+        projects = []
+        # Find blocks starting with \textbf{Project Title}
+        pattern = re.compile(r"\\textbf\{([^}]+)\}(.*?)(?=\\textbf\{|$)", re.DOTALL)
+        
+        for match in pattern.finditer(content):
+          title = self._clean_latex_syntax(match.group(1).strip())
+          body = match.group(2)
+          
+          # Extract items inside itemize blocks, avoiding raw LaTeX keywords
+          item_pattern = re.compile(r"\\item\s+(.*?)(?=\\item|\\end\{itemize\}|$)", re.DOTALL)
+          items = []
+          for item_match in item_pattern.findall(body):
+            cleaned_item = self._clean_latex_syntax(item_match.replace('\n', ' ').strip())
+            if cleaned_item:
+              items.append(cleaned_item)
+              
+          if title:
+            projects.append({
+                "project_name": title,
+                "tech_stack": [],
+                "details": items
+            })
+        return projects
     return []
 
   def parse_technical_skills(self) -> List[Dict[str, Any]]:
+    """Parses technical skills section into structured category and skill items."""
     for key in ["technical skills", "skills"]:
-      if key in self.sections:
-        return self.parse_structured_entries(key)
+      content = self.get_section_content(key)
+      if content:
+        skill_groups = []
+        lines = content.split('\n')
+        
+        for line in lines:
+          line_str = line.strip()
+          if not line_str or line_str.startswith('%') or '---' in line_str:
+            continue
+            
+          # Match lines like: \item \textbf{Category:} Skill 1, Skill 2
+          match = re.search(r"\\item\s+\\textbf\{([^}]+)\}\s*[:\-]?\s*(.*)", line_str)
+          if match:
+            category_raw = match.group(1).strip()
+            # Clean trailing colons from category title if present
+            category = self._clean_latex_syntax(re.sub(r'[:\-]+$', '', category_raw)).strip()
+            
+            skills_raw = match.group(2).strip()
+            # Clean LaTeX syntax and split skills by comma
+            cleaned_skills_str = self._clean_latex_syntax(skills_raw)
+            skills_list = [s.strip() for s in cleaned_skills_str.split(',') if s.strip()]
+            
+            if category and skills_list:
+              skill_groups.append({
+                  "title": category,
+                  "bullet_points": skills_list
+              })
+        return skill_groups
     return []
 
   def parse_certificates(self) -> List[Dict[str, Any]]:
+    """Parses certificates extracting certificate name, issuing organization, and year."""
     for key in ["certifications", "certification", "certificates", "certificate"]:
       content = self.get_section_content(key)
       if content:
         entries = []
         lines = re.split(r'\\\\\s*|\n', content)
-        
-        # Ignored LaTeX artifacts or unwanted text headers
         ignored_tokens = {"[leftmargin=*", "certificates", "certifications", "skills"}
         
         for line in lines:
@@ -389,22 +448,46 @@ class LaTeXReader:
           if not line_str or line_str.startswith('%'):
             continue
             
-          # Clean LaTeX syntax first to check its true value
-          cleaned = self._clean_latex_syntax(line_str)
-          
-          # Skip structural LaTeX elements or headers
-          if not cleaned or any(cleaned.lower().startswith(token) for token in ignored_tokens):
+          cleaned_line = self._clean_latex_syntax(line_str)
+          if not cleaned_line or any(cleaned_line.lower().startswith(token) for token in ignored_tokens):
             continue
           
-          from_date, to_date = self._extract_dates(line_str)
-          
+          cert_name = cleaned_line
+          issuing_org = ""
+          from_date = ""
+          to_date = ""
+
+          # Split by '---' to isolate certificate name from organization & date
+          if "---" in line_str:
+            parts = [p.strip() for p in line_str.split("---", 1)]
+            cert_name = self._clean_latex_syntax(parts[0])
+            right_part = parts[1]
+            
+            # Extract year from right part (e.g., "(2025)")
+            year_match = re.search(r'\((\d{4})\)', right_part)
+            if year_match:
+              from_date = year_match.group(1)
+              issuing_org = self._clean_latex_syntax(re.sub(r'\(\d{4}\)', '', right_part))
+            else:
+              issuing_org = self._clean_latex_syntax(right_part)
+          else:
+            year_match = re.search(r'\((\d{4})\)', line_str)
+            if year_match:
+              from_date = year_match.group(1)
+
+          # Fallback to general date range extractor if year wasn't found
+          if not from_date:
+            from_date, to_date = self._extract_dates(line_str)
+
           entries.append({
-              "certificate_name": cleaned,
+              "certificate_name": cert_name,
+              "issuing_organization": issuing_org,
               "certificate_id": "",
               "from": from_date,
               "to": to_date,
               "url": "",
-              "bullet_points": []
+              "skills": [],
+              "media_picture": ""
           })
         return entries
     return []

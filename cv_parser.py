@@ -63,7 +63,11 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
     projects = reader.parse_projects()
     skills = reader.parse_technical_skills()
     
-    if not (education or experience or projects or skills):
+    # Extract new sections
+    core_competencies = reader.parse_core_competencies()
+    languages = reader.parse_languages()
+    
+    if not (education or experience or projects or skills or core_competencies or languages):
       return None
 
     candidate_name = reader.parse_candidate_name()
@@ -97,7 +101,7 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
             "tech_stack": [],
             "details": proj.get("bullet_points", [])
         })
-
+    certifications = reader.parse_certificates()
     abs_path = os.path.abspath(filepath)
     filename = os.path.basename(filepath)
 
@@ -107,12 +111,12 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
         "contact_info": contact_info,
         "summaries": summaries,
         "technical_skills": tech_skills_dict,
-        "core_competencies": [],
+        "core_competencies": core_competencies,  # Added core competencies
         "work_experience": formatted_experience,
-        "education": education,  # Already validated and formatted inside LaTeXReader
+        "education": education,
         "projects": formatted_projects,
-        "certifications": reader.parse_certificates(),
-        "languages": [],
+        "certifications": certifications,
+        "languages": languages,                   # Added languages list
         "file_path": abs_path,
         "source_file": filename,
         "latex_granular": {
@@ -120,6 +124,8 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
             "experience_structured": experience,
             "projects_structured": projects,
             "skills_structured": skills,
+            "core_competencies": core_competencies,
+            "languages": languages,
             "sections": reader.sections
         }
     }
@@ -339,7 +345,7 @@ def build_sqlite_master_profile(
 
       db.upsert_scanned_file(rel_path, abs_path, mtime, formatted_date)
 
-      sections = ["summary", "education", "experience", "project", "certificate", "language", "skills"]
+      sections = ["summary", "education", "experience", "project", "certificate", "language", "skills", "core_competencies"]
       for section in tqdm(sections, desc="   -> Inserting sections", leave=False):
         if section == "summary":
           db.store_summary_section(parsed_data, rel_path)
@@ -355,6 +361,8 @@ def build_sqlite_master_profile(
           db.store_language_section(parsed_data)
         elif section == "skills":
           db.store_skills_section(parsed_data, rel_path)
+        elif section == "core_competencies":
+          db.store_core_competencies_section(parsed_data, rel_path)
 
     except Exception as e:
       print(f"\n[!] Error processing file {filepath}: {e}")
