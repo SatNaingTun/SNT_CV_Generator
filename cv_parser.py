@@ -9,7 +9,6 @@ from config import CV_FOLDER, MODEL_NAME, OUTPUT_FOLDER, DB_NAME, DATA_FOLDER
 from db_manager import SQLiteCRUD
 from job_manager import load_job_history
 from latex_reader import LaTeXReader
-from latex_writer import LaTeXWriter
 from llm_client import client
 from tqdm import tqdm
 from utils import extract_text_from_file

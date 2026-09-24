@@ -408,6 +408,122 @@ class SQLiteCRUD:
         )
     self.conn.commit()
 
+  def get_contact_info(self) -> dict:
+    cursor = self.conn.cursor()
+    cursor.execute("SELECT candidate_name, email, phone, linkedin, github FROM contact_info LIMIT 1")
+    row = cursor.fetchone()
+    if row:
+      return {
+          "candidate_name": row[0],
+          "email": row[1],
+          "phone": row[2],
+          "linkedin": row[3],
+          "github": row[4]
+      }
+    return {"candidate_name": "Sat Naing Tun", "email": "", "phone": "", "linkedin": "", "github": ""}
+
+  def get_summary(self) -> str:
+    cursor = self.conn.cursor()
+    cursor.execute("SELECT summary FROM summary_and_job LIMIT 1")
+    row = cursor.fetchone()
+    return row[0] if row and row[0] else ""
+
+  def get_education(self) -> list:
+    cursor = self.conn.cursor()
+    cursor.execute('SELECT degree, institution, "from", "to", coursework, thesis FROM education')
+    education_list = []
+    import json
+    for row in cursor.fetchall():
+      try:
+        cw = json.loads(row[4]) if row[4] else []
+      except Exception:
+        cw = []
+      education_list.append({
+          "degree": row[0],
+          "institution": row[1],
+          "from": row[2],
+          "to": row[3],
+          "coursework": cw,
+          "thesis": row[5]
+      })
+    return education_list
+
+  def get_experience(self) -> list:
+    cursor = self.conn.cursor()
+    cursor.execute('SELECT job_title, company, "from", "to", details FROM experience')
+    experience_list = []
+    import json
+    for row in cursor.fetchall():
+      try:
+        bullets = json.loads(row[4]) if row[4] else []
+      except Exception:
+        bullets = [row[4]] if row[4] else []
+      experience_list.append({
+          "title": row[0],
+          "company": row[1],
+          "from": row[2],
+          "to": row[3],
+          "bullet_points": bullets
+      })
+    return experience_list
+
+  def get_projects(self) -> list:
+    cursor = self.conn.cursor()
+    cursor.execute('SELECT project_name, tech_stack, details FROM projects')
+    projects_list = []
+    import json
+    for row in cursor.fetchall():
+      try:
+        ts = json.loads(row[1]) if row[1] else []
+      except Exception:
+        ts = []
+      try:
+        det = json.loads(row[2]) if row[2] else []
+      except Exception:
+        det = [row[2]] if row[2] else []
+      projects_list.append({
+          "project_name": row[0],
+          "tech_stack": ts,
+          "details": det
+      })
+    return projects_list
+
+  def get_certifications(self) -> list:
+    cursor = self.conn.cursor()
+    cursor.execute('SELECT certificate_name, issuing_organization, "from", "to", url FROM certifications')
+    cert_list = []
+    for row in cursor.fetchall():
+      cert_list.append({
+          "certificate_name": row[0],
+          "issuing_organization": row[1],
+          "from": row[2],
+          "to": row[3],
+          "url": row[4]
+      })
+    return cert_list
+
+  def get_languages(self) -> list:
+    cursor = self.conn.cursor()
+    cursor.execute('SELECT language FROM languages')
+    return [row[0] for row in cursor.fetchall()]
+
+  def get_core_competencies(self) -> list:
+    cursor = self.conn.cursor()
+    cursor.execute('SELECT competencies FROM core_competencies LIMIT 1')
+    row = cursor.fetchone()
+    if row and row[0]:
+      return [c.strip() for c in row[0].split(",")]
+    return []
+
+  def get_technical_skills(self) -> dict:
+    cursor = self.conn.cursor()
+    cursor.execute('SELECT category, skills FROM technical_skills')
+    skills_dict = {}
+    for row in cursor.fetchall():
+      cat, sk_str = row[0], row[1]
+      skills_dict[cat] = [s.strip() for s in sk_str.split(",") if s.strip()]
+    return skills_dict
+
   def close(self):
     if self.conn:
       self.conn.close()

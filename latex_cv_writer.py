@@ -1,4 +1,4 @@
-class LaTeXWriter:
+class LaTeXCVWriter:
     @staticmethod
     @staticmethod
     @staticmethod
@@ -27,7 +27,7 @@ class LaTeXWriter:
             return ""
         out = ["\\begin{itemize}"]
         for item in items:
-            out.append(f"  \\item {LaTeXWriter.write_sentence(item)}")
+            out.append(f"  \\item {LaTeXCVWriter.write_sentence(item)}")
         out.append("\\end{itemize}")
         return "\n".join(out)
 
@@ -92,18 +92,18 @@ class LaTeXWriter:
 
     @staticmethod
     def write_summary_section(summary: str) -> str:
-        cleaned_summary = LaTeXWriter.write_sentence(summary)
+        cleaned_summary = LaTeXCVWriter.write_sentence(summary)
         return f"\\section*{{Professional Summary}}\n\n{cleaned_summary}\n"
 
     @staticmethod
     def write_skills_section(skills: dict) -> str:
         out = ["\\section{Technical Skills}\n", "\\begin{itemize}"]
         for cat, items in skills.items():
-            safe_cat = LaTeXWriter.write_sentence(cat)
+            safe_cat = LaTeXCVWriter.write_sentence(cat)
             if isinstance(items, list):
-                safe_items = ", ".join([LaTeXWriter.write_sentence(i) for i in items])
+                safe_items = ", ".join([LaTeXCVWriter.write_sentence(i) for i in items])
             else:
-                safe_items = LaTeXWriter.write_sentence(str(items))
+                safe_items = LaTeXCVWriter.write_sentence(str(items))
             out.append(f"    \\item \\textbf{{{safe_cat}:}} {safe_items}")
         out.append("\\end{itemize}\n")
         return "\n".join(out)
@@ -114,29 +114,31 @@ class LaTeXWriter:
             return ""
         out = ["\\section*{Core Competencies}\n", "\\begin{itemize}[leftmargin=*]"]
         for comp in competencies:
-            out.append(f"\\item {LaTeXWriter.write_sentence(comp)}")
+            out.append(f"\\item {LaTeXCVWriter.write_sentence(comp)}")
         out.append("\\end{itemize}\n")
         return "\n".join(out)
 
     @staticmethod
+    @staticmethod
     def write_education_section(education: list) -> str:
         out = ["\\section*{Education}\n"]
         for idx, e in enumerate(education):
-            deg = LaTeXWriter.write_sentence(e.get('degree', ''))
-            inst = LaTeXWriter.write_sentence(e.get('institution', ''))
-            f_date = LaTeXWriter.write_sentence(e.get('from', ''))
-            t_date = LaTeXWriter.write_sentence(e.get('to', ''))
+            deg = LaTeXCVWriter.write_sentence(e.get('degree', ''))
+            inst = LaTeXCVWriter.write_sentence(e.get('institution', ''))
+            f_date = LaTeXCVWriter.write_sentence(e.get('from', ''))
+            t_date = LaTeXCVWriter.write_sentence(e.get('to', ''))
             coursework = e.get('coursework', [])
-            thesis = LaTeXWriter.write_sentence(e.get('thesis', ''))
+            thesis = LaTeXCVWriter.write_sentence(e.get('thesis', ''))
 
             out.append(f"\\textbf{{{deg}}} \\hfill {f_date} -- {t_date} \\\\")
             out.append(inst)
             if coursework or thesis:
                 out.append("\\begin{itemize}")
                 if coursework:
-                    cw_list = [LaTeXWriter.write_sentence(cw) for cw in coursework] if isinstance(coursework, list) else [LaTeXWriter.write_sentence(coursework)]
+                    cw_list = [LaTeXCVWriter.write_sentence(cw) for cw in coursework] if isinstance(coursework, list) else [LaTeXCVWriter.write_sentence(coursework)]
                     cw_str = ", ".join(cw_list)
-                    out.append(f"    \\item \\textbf{{Relevant Coursework & Subjects}}: {cw_str}")
+                    # Notice the escaped \& here:
+                    out.append(f"    \\item \\textbf{{Relevant Coursework \\& Subjects}}: {cw_str}")
                 if thesis:
                     out.append(f"    \\item \\textbf{{Thesis / Research Focus:}} {thesis}")
                 out.append("\\end{itemize}")
@@ -146,12 +148,12 @@ class LaTeXWriter:
 
     @staticmethod
     def write_experience_section(experiences: list) -> str:
-        out = ["\\newpage", "\\section*{PROFESSIONAL EXPERIENCE}\n"]
+        out = ["\n","\\section*{PROFESSIONAL EXPERIENCE}\n"]
         for idx, exp in enumerate(experiences):
-            title = LaTeXWriter.write_sentence(exp.get('job_title') or exp.get('title', ''))
-            company = LaTeXWriter.write_sentence(exp.get('company', ''))
-            from_d = LaTeXWriter.write_sentence(exp.get('from', ''))
-            to_d = LaTeXWriter.write_sentence(exp.get('to', ''))
+            title = LaTeXCVWriter.write_sentence(exp.get('job_title') or exp.get('title', ''))
+            company = LaTeXCVWriter.write_sentence(exp.get('company', ''))
+            from_d = LaTeXCVWriter.write_sentence(exp.get('from', ''))
+            to_d = LaTeXCVWriter.write_sentence(exp.get('to', ''))
             bullets = exp.get('bullet_points', [])
             
             out.append(f"\\textbf{{{title}}} \\hfill {from_d} -- {to_d} \\\\")
@@ -159,7 +161,7 @@ class LaTeXWriter:
             out.append("")
             out.append("\\begin{itemize}")
             for b in bullets:
-                out.append(f"    \\item {LaTeXWriter.write_sentence(b)}")
+                out.append(f"    \\item {LaTeXCVWriter.write_sentence(b)}")
             out.append("\\end{itemize}")
             if idx < len(experiences) - 1:
                 out.append("\\vspace{4mm}\n")
@@ -169,14 +171,14 @@ class LaTeXWriter:
     def write_projects_section(projects: list) -> str:
         out = ["\\section*{Selected Projects}\n"]
         for idx, p in enumerate(projects):
-            p_name = LaTeXWriter.write_sentence(p.get('project_name', ''))
+            p_name = LaTeXCVWriter.write_sentence(p.get('project_name', ''))
             details = p.get('details', [])
             
             out.append(f"\\textbf{{{p_name}}}")
             out.append("")
             out.append("\\begin{itemize}")
             for d in details:
-                out.append(f"\\item {LaTeXWriter.write_sentence(d)}")
+                out.append(f"\\item {LaTeXCVWriter.write_sentence(d)}")
             out.append("\\end{itemize}")
             if idx < len(projects) - 1:
                 out.append("\\vspace{4mm}\n")
@@ -186,9 +188,9 @@ class LaTeXWriter:
     def write_certifications_section(certs: list) -> str:
         out = ["\\section{Certifications}\n", "\\begin{itemize}"]
         for c in certs:
-            name = LaTeXWriter.write_sentence(c.get('certificate_name', ''))
-            org = LaTeXWriter.write_sentence(c.get('issuing_organization', ''))
-            year = LaTeXWriter.write_sentence(c.get('from', ''))
+            name = LaTeXCVWriter.write_sentence(c.get('certificate_name', ''))
+            org = LaTeXCVWriter.write_sentence(c.get('issuing_organization', ''))
+            year = LaTeXCVWriter.write_sentence(c.get('from', ''))
             org_str = f" --- {org}" if org else ""
             year_str = f" ({year})" if year else ""
             out.append(f"\\item {name}{org_str}{year_str}")
@@ -197,11 +199,11 @@ class LaTeXWriter:
 
     @staticmethod
     def write_languages_section(languages: list) -> str:
-        safe_langs = [LaTeXWriter.write_sentence(l) for l in languages]
+        safe_langs = [LaTeXCVWriter.write_sentence(l) for l in languages]
         lang_str = " \\\\ \n".join(safe_langs)
         return f"\\section*{{LANGUAGES}}\n{lang_str}\n"
 
     @staticmethod
     def write_summary_section(summary: str) -> str:
-        cleaned_summary = LaTeXWriter.write_sentence(summary)
+        cleaned_summary = LaTeXCVWriter.write_sentence(summary)
         return f"\\section*{{Professional Summary}}\n\n{cleaned_summary}\n"

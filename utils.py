@@ -8,7 +8,7 @@ from TexSoup import TexSoup
 
 from config import IGNORE_FOLDERS, IMAGE_EXTENSIONS
 from latex_reader import LaTeXReader
-from latex_writer import LaTeXWriter
+# from latex_cv_writer import LaTeXCVWriter
 import os
 import os
 
@@ -124,11 +124,6 @@ def copy_cv_assets(
       shutil.copy2(src_path, dst_path)
 
 
-def sanitize_latex_characters(text: str, is_list: bool = True) -> str:
-  """Delegates character escaping and syntax wrapping to LaTeXWriter."""
-  if is_list:
-    return LaTeXWriter.write_list(text)
-  return LaTeXWriter.write_sentence(text)
 
 
 def strip_straggling_pagebreaks(tex_content: str) -> str:

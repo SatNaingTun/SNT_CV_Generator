@@ -1,7 +1,13 @@
 import re
 from latex_reader import LaTeXReader
-from latex_writer import LaTeXWriter
+from latex_cv_writer import LaTeXCVWriter, LaTeXWriter
 
+
+def sanitize_latex_characters(text: str, is_list: bool = True) -> str:
+  """Delegates character escaping and syntax wrapping to LaTeXCVWriter."""
+  if is_list:
+    return LaTeXCVWriter.write_list(text)
+  return LaTeXCVWriter.write_sentence(text)
 
 def convert_tabularx_to_itemize_skills(raw_tex: str) -> str:
   """Detects any tabularx skills table in raw_tex, converts it to itemize format,
@@ -14,7 +20,7 @@ def convert_tabularx_to_itemize_skills(raw_tex: str) -> str:
   if not skills_dict:
     return raw_tex
 
-  new_itemize_skills = LaTeXWriter.write_skills_as_list(skills_dict)
+  new_itemize_skills = LaTeXCVWriter.write_skills_as_list(skills_dict)
   return replace_skills_section_in_raw_tex(raw_tex, new_itemize_skills)
 
 
