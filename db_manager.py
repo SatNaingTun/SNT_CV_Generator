@@ -183,26 +183,38 @@ class SQLiteCRUD:
         )
     self.conn.commit()
 
-  def store_project_section(self, parsed_data: Dict[str, Any]):
+  def store_projects_section(self, parsed_data: Dict[str, Any]):
+    """Stores or updates the parsed projects section in the SQLite database."""
     cursor = self.conn.cursor()
     candidate_name = parsed_data.get("candidate_name", "").strip()
+    
     for proj in parsed_data.get("projects", []):
-      project_name = proj.get("project_name", "").strip()
-      import json
-      tech_stack = json.dumps(proj.get("tech_stack", []))
-      details_list = proj.get("details", [])
-      details_text = "\n".join(details_list) if isinstance(details_list, list) else str(details_list)
-      if project_name:
-        cursor.execute(
-            """
-            INSERT INTO projects (candidate_name, project_name, tech_stack, details)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(candidate_name, project_name) DO UPDATE SET
-                tech_stack=excluded.tech_stack,
-                details=excluded.details
-        """,
-            (candidate_name, project_name, tech_stack, details_text),
-        )
+      if isinstance(proj, dict):
+        project_name = proj.get("project_name", "").strip()
+        
+        # Handle tech stack
+        tech_stack = proj.get("tech_stack", "")
+        if isinstance(tech_stack, list):
+          import json
+          tech_stack = json.dumps(tech_stack)
+          
+        # Handle details array (serialize list to JSON or newline string)
+        details = proj.get("details", "")
+        if isinstance(details, list):
+          import json
+          details = json.dumps(details)  # Stores the Python array as JSON in SQLite
+
+        if project_name:
+          cursor.execute(
+              """
+              INSERT INTO projects (candidate_name, project_name, tech_stack, details)
+              VALUES (?, ?, ?, ?)
+              ON CONFLICT(candidate_name, project_name) DO UPDATE SET
+                  tech_stack=excluded.tech_stack,
+                  details=excluded.details
+          """,
+              (candidate_name, project_name, tech_stack, details),
+          )
     self.conn.commit()
 
   def store_certificate_section(self, parsed_data: Dict[str, Any]):

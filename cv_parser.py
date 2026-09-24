@@ -92,15 +92,15 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
             "bullet_points": exp.get("bullet_points", [])
         })
 
-    formatted_projects = []
-    for proj in projects:
-      if isinstance(proj, dict):
-        formatted_projects.append({
-            "project_name": proj.get("title", ""),
-            "dates": proj.get("metadata", ""),
-            "tech_stack": [],
-            "details": proj.get("bullet_points", [])
-        })
+    # formatted_projects = []
+    # for proj in projects:
+    #   if isinstance(proj, dict):
+    #     formatted_projects.append({
+    #         "project_name": proj.get("title", ""),
+    #         "dates": proj.get("metadata", ""),
+    #         "tech_stack": [],
+    #         "details": proj.get("bullet_points", [])
+    #     })
     certifications = reader.parse_certificates()
     abs_path = os.path.abspath(filepath)
     filename = os.path.basename(filepath)
@@ -114,7 +114,7 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
         "core_competencies": core_competencies,  # Added core competencies
         "work_experience": formatted_experience,
         "education": education,
-        "projects": formatted_projects,
+        "projects": projects,
         "certifications": certifications,
         "languages": languages,                   # Added languages list
         "file_path": abs_path,
@@ -354,7 +354,7 @@ def build_sqlite_master_profile(
         elif section == "experience":
           db.store_experience_section(parsed_data)
         elif section == "project":
-          db.store_project_section(parsed_data)
+          db.store_projects_section(parsed_data)
         elif section == "certificate":
           db.store_certificate_section(parsed_data)
         elif section == "language":

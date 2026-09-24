@@ -371,32 +371,49 @@ class LaTeXReader:
       
     return formatted_experience
   
+  def parse_itemize_to_array(self, content: str) -> List[str]:
+    """Reusable helper to extract and clean LaTeX itemize blocks into a Python list array."""
+    if not content:
+      return []
+    
+    items = []
+    # Find all individual \item blocks
+    item_pattern = re.compile(r"\\item\s+(.*?)(?=\\item|\\end\{itemize\}|$)", re.DOTALL)
+    
+    for match in item_pattern.findall(content):
+      # Clean LaTeX syntax and remove leftover tags
+      cleaned = match.replace('\\begin{itemize}', '').replace('\\end{itemize}', '')
+      cleaned = self._clean_latex_syntax(cleaned.replace('\n', ' ').strip())
+      
+      # Filter out noise or partial tags
+      if cleaned and not cleaned.startswith('nd{itemize}') and not cleaned.startswith('\\end'):
+        items.append(cleaned)
+        
+    return items
+  
   def parse_projects(self) -> List[Dict[str, Any]]:
-    """Parses selected projects, separating titles and cleaning list tags/artifacts."""
+    """Parses selected projects, extracting \textbf{} as the project name 
+    and the subsequent itemize block as the details array.
+    """
     for key in ["projects", "selected projects", "project"]:
       content = self.get_section_content(key)
       if content:
         projects = []
-        # Find blocks starting with \textbf{Project Title}
+        # Match each project block starting with \textbf{Project Name}
         pattern = re.compile(r"\\textbf\{([^}]+)\}(.*?)(?=\\textbf\{|$)", re.DOTALL)
         
         for match in pattern.finditer(content):
-          title = self._clean_latex_syntax(match.group(1).strip())
+          project_name = self._clean_latex_syntax(match.group(1).strip())
           body = match.group(2)
           
-          # Extract items inside itemize blocks, avoiding raw LaTeX keywords
-          item_pattern = re.compile(r"\\item\s+(.*?)(?=\\item|\\end\{itemize\}|$)", re.DOTALL)
-          items = []
-          for item_match in item_pattern.findall(body):
-            cleaned_item = self._clean_latex_syntax(item_match.replace('\n', ' ').strip())
-            if cleaned_item:
-              items.append(cleaned_item)
+          # Call the reusable helper function to turn \item bullets into an array
+          details_array = self.parse_itemize_to_array(body)
               
-          if title:
+          if project_name:
             projects.append({
-                "project_name": title,
+                "project_name": project_name,
                 "tech_stack": [],
-                "details": items
+                "details": details_array  # Python list array of bullet points
             })
         return projects
     return []
@@ -435,7 +452,7 @@ class LaTeXReader:
     return []
 
   def parse_certificates(self) -> List[Dict[str, Any]]:
-    """Parses certificates extracting certificate name, issuing organization, and year."""
+    """Parses certificates handling various dash types (---, —, --), extracting name, organization, and year."""
     for key in ["certifications", "certification", "certificates", "certificate"]:
       content = self.get_section_content(key)
       if content:
@@ -445,7 +462,7 @@ class LaTeXReader:
         
         for line in lines:
           line_str = line.strip()
-          if not line_str or line_str.startswith('%'):
+          if not line_str or line_str.startswith('%') or '\\begin' in line_str or '\\end' in line_str:
             continue
             
           cleaned_line = self._clean_latex_syntax(line_str)
@@ -457,13 +474,14 @@ class LaTeXReader:
           from_date = ""
           to_date = ""
 
-          # Split by '---' to isolate certificate name from organization & date
-          if "---" in line_str:
-            parts = [p.strip() for p in line_str.split("---", 1)]
+          # Flexible split for any dash variant (---, —, --)
+          dash_pattern = r'\s*(?:---|—|--)\s*'
+          if re.search(dash_pattern, line_str):
+            parts = re.split(dash_pattern, line_str, maxsplit=1)
             cert_name = self._clean_latex_syntax(parts[0])
             right_part = parts[1]
             
-            # Extract year from right part (e.g., "(2025)")
+            # Extract 4-digit year in parentheses
             year_match = re.search(r'\((\d{4})\)', right_part)
             if year_match:
               from_date = year_match.group(1)
@@ -475,7 +493,6 @@ class LaTeXReader:
             if year_match:
               from_date = year_match.group(1)
 
-          # Fallback to general date range extractor if year wasn't found
           if not from_date:
             from_date, to_date = self._extract_dates(line_str)
 
