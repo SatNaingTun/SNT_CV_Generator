@@ -1,123 +1,120 @@
 import argparse
 import os
-import sys
-from tqdm import tqdm
 
 from config import (
     CV_FOLDER,
     OUTPUT_BASENAME,
     OUTPUT_COVERLETTER_BASENAME,
     OUTPUT_FOLDER,
+    DATA_FOLDER,
+    DB_NAME,
+    RESUME_FORMAT,
+)
+from job_manager import get_or_cache_job_description
+from cv_parser import select_optimal_cv_file, build_sqlite_master_profile
+from db_manager import SQLiteCRUD
+from utils import (
+    format_job_summary,
+    prompt_for_job_description,
 )
 
-# Imports from existing modules
-from generate_cv import generate_tailored_cv
-from generate_coverletter import generate_tailored_coverletter
-from cv_parser import select_optimal_cv_file
-from utils import extract_text_from_file, get_job_description
+# Imported core generation functions
+from generate_cv import generate_tailored_cv as generate_cv
+from generate_coverletter import generate_tailored_coverletter as generate_cover_letter
 
 
-def get_output_path(basename: str) -> str:
-    """Helper to ensure output path has .tex extension in OUTPUT_FOLDER."""
-    base = os.path.splitext(basename)[0] if basename.endswith(".tex") else basename
-    return os.path.join(OUTPUT_FOLDER, f"{base}.tex")
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Generate tailored CV, Cover Letter, or both from a Job Description."
-    )
-    parser.add_argument(
-        "-m",
-        "--mode",
-        choices=["both", "cv", "coverletter"],
-        default="both",
-        help="Target deliverable to generate (default: both).",
-    )
-    parser.add_argument(
-        "-j",
-        "--jd",
-        type=str,
-        help="Job Description text, file path, or URL. If omitted, prompts for input once.",
-    )
-    parser.add_argument(
-        "-c",
-        "--cv",
-        type=str,
-        help="Path to candidate CV file. If omitted, auto-selects best CV from CV_FOLDER.",
-    )
-
-    args = parser.parse_args()
-
-    # ---------------------------------------------------------
-    # 1. OBTAIN JOB DESCRIPTION (ONCE)
-    # ---------------------------------------------------------
-    raw_jd_input = args.jd
-
-    if not raw_jd_input:
-        print("=" * 65)
-        print("[Step 1] Enter Job Description (URL, file path, or paste multi-line text).")
-        print("When finished, press Ctrl+D (or Ctrl+Z on Windows):")
-        print("=" * 65)
-        raw_jd_input = sys.stdin.read().strip()
-
-    if not raw_jd_input:
-        print("[!] No job description provided. Exiting.")
-        sys.exit(1)
-
-    print("\n[+] Processing Job Description...")
-    job_description = get_job_description(raw_jd_input)
-    print(f"[✓] Job Description ready ({len(job_description)} characters).")
-
-    # ---------------------------------------------------------
-    # 2. SELECT & READ CANDIDATE CV (ONCE)
-    # ---------------------------------------------------------
-    cv_file = args.cv
-    if not cv_file:
-        print("\n[+] Auto-selecting best matching CV from repository...")
-        cv_file = select_optimal_cv_file(CV_FOLDER, job_description)
-
-    print(f"[✓] Using CV template: {os.path.basename(cv_file)}")
-    candidate_cv_text = extract_text_from_file(cv_file)
-
-    # ---------------------------------------------------------
-    # 3. EXECUTE GENERATION (BASED ON MODE)
-    # ---------------------------------------------------------
-    mode = args.mode.lower()
-    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
-    cv_tex_path = get_output_path(OUTPUT_BASENAME)
-    cl_tex_path = get_output_path(OUTPUT_COVERLETTER_BASENAME)
-
-    print("\n" + "=" * 65)
-    print(f"   STARTING PIPELINE — TARGET MODE: [{mode.upper()}]")
-    print("=" * 65)
-
-    if mode in ["cv", "both"]:
-        print("\n=== [1/2] GENERATING TAILORED CV ===")
-        try:
-            generate_tailored_cv(cv_file, job_description, cv_tex_path)
-            print(f"[✓] Tailored CV generation finished.")
-        except Exception as e:
-            print(f"[!] Error during CV generation: {e}")
-
-    if mode in ["coverletter", "both"]:
-        print("\n=== [2/2] GENERATING TAILORED COVER LETTER ===")
-        try:
-            generate_tailored_coverletter(
-                raw_job_input=job_description,
-                candidate_cv_text=candidate_cv_text,
-                output_path=cl_tex_path,
-            )
-            print(f"[✓] Cover Letter generation finished.")
-        except Exception as e:
-            print(f"[!] Error during Cover Letter generation: {e}")
-
-    print("\n" + "=" * 65)
-    print("   [✓] PIPELINE COMPLETED SUCCESSFULLY")
-    print(f"   Outputs saved to: {os.path.abspath(OUTPUT_FOLDER)}")
-    print("=" * 65)
+def load_full_profile_data() -> dict:
+    """Loads all profile attributes from SQLite database."""
+    db_path = os.path.join(DATA_FOLDER, DB_NAME)
+    if not os.path.exists(db_path):
+        build_sqlite_master_profile(cv_folder=CV_FOLDER)
+    
+    db = SQLiteCRUD(db_path)
+    data = {
+        "contact": db.get_contact_info(),
+        "summary": db.get_summary(),
+        "education": db.get_education(),
+        "experience": db.get_experience(),
+        "projects": db.get_projects(),
+        "certifications": db.get_certifications(),
+        "languages": db.get_languages(),
+        "core_competencies": db.get_core_competencies(),
+        "technical_skills": db.get_technical_skills()
+    }
+    db.close()
+    return data
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Unified Application Pipeline: Generate tailored CV, Cover Letter, or both simultaneously."
+    )
+    parser.add_argument(
+        "--cv-only",
+        action="store_true",
+        help="Generate only the tailored CV/Resume."
+    )
+    parser.add_argument(
+        "--cl-only",
+        action="store_true",
+        help="Generate only the tailored Cover Letter."
+    )
+    parser.add_argument(
+        "--job",
+        type=str,
+        default="",
+        help="Optional direct job description string or text source."
+    )
+    
+    args = parser.parse_args()
+
+    # Determine execution flow (default: both if neither flag is specified)
+    generate_cv_flag = True
+    generate_cl_flag = True
+
+    if args.cv_only and not args.cl_only:
+        generate_cl_flag = False
+    elif args.cl_only and not args.cv_only:
+        generate_cv_flag = False
+
+    print("=====================================================================")
+    print("🚀 Initializing Unified Application Generation Pipeline")
+    print(f"   Mode -> CV: {generate_cv_flag} | Cover Letter: {generate_cl_flag}")
+    print("=====================================================================")
+
+    # Shared analysis/fetching step (runs only once)
+    raw_input = args.job if args.job else prompt_for_job_description()
+    job_info = get_or_cache_job_description(raw_input)
+    job_summary_str = format_job_summary(job_info)
+
+    print("\n[+] Loading candidate master profile from SQLite...")
+    profile_data = load_full_profile_data()
+
+    # 1. Conditionally invoke CV generation function
+    if generate_cv_flag:
+        selected_template = select_optimal_cv_file(CV_FOLDER)
+        base_cv_name = (
+            os.path.splitext(OUTPUT_BASENAME)[0]
+            if OUTPUT_BASENAME.endswith(".tex")
+            else OUTPUT_BASENAME
+        )
+        output_cv_tex = os.path.join(OUTPUT_FOLDER, f"{base_cv_name}.tex")
+        
+        # Calls generate_tailored_cv from generate_cv_2.py
+        generate_cv(selected_template, job_info, output_cv_tex)
+
+    # 2. Conditionally invoke Cover Letter generation function
+    if generate_cl_flag:
+        base_cl_name = (
+            os.path.splitext(OUTPUT_COVERLETTER_BASENAME)[0]
+            if OUTPUT_COVERLETTER_BASENAME.endswith(".tex")
+            else OUTPUT_COVERLETTER_BASENAME
+        )
+        output_cl_tex = os.path.join(OUTPUT_FOLDER, f"{base_cl_name}.tex")
+        
+        # Calls generate_tailored_coverletter from generate_coverletter_4.py
+        generate_cover_letter(raw_input, output_cl_tex)
+
+    print("\n=====================================================================")
+    print("[✓] Pipeline execution finished successfully!")
+    print("=====================================================================")
