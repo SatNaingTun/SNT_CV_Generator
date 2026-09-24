@@ -22,10 +22,11 @@ class LaTeXCoverLetterWriter:
         phone = contact_info.get("phone", "")
         linkedin = contact_info.get("linkedin", "")
         github = contact_info.get("github", "")
+        email = contact_info.get("email", "")
 
         contact_parts = []
-        if target_position:
-            contact_parts.append(f"\\textbf{{Position:}} {target_position}")
+        if email:
+            contact_parts.append(email)
         if phone:
             contact_parts.append(phone)
         if linkedin:
