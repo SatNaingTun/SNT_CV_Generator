@@ -1,6 +1,6 @@
 import re
 from latex_reader import LaTeXReader
-from latex_cv_writer import LaTeXCVWriter, LaTeXWriter
+from latex_cv_writer import LaTeXCVWriter
 
 
 def sanitize_latex_characters(text: str, is_list: bool = True) -> str:
@@ -62,7 +62,7 @@ def convert_tabularx_to_itemize_skills(raw_tex: str) -> str:
   if not skills_dict:
     return raw_tex
 
-  new_itemize_skills = LaTeXWriter.write_skills_as_list(skills_dict)
+  new_itemize_skills = LaTeXCVWriter.write_skills_as_list(skills_dict)
   return replace_skills_section_in_raw_tex(raw_tex, new_itemize_skills)
 
 

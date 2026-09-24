@@ -10,241 +10,161 @@ from config import (
     MODEL_NAME,
     OUTPUT_COVERLETTER_BASENAME,
     OUTPUT_FOLDER,
+    DATA_FOLDER,
+    DB_NAME,
 )
 from job_manager import get_or_cache_job_description
 from latex_utils import strip_section_headers
 from llm_client import client
-from cv_parser import select_optimal_cv_file
+from cv_parser import select_optimal_cv_file, build_sqlite_master_profile
+from db_manager import SQLiteCRUD
 from utils import compile_latex_to_pdf, extract_text_from_file, get_job_description
 
 
-def extract_contact_info_from_cv(cv_text: str) -> Dict[str, str]:
-    """Uses LLM to reliably extract contact information from CV text."""
-    system_prompt = (
-        "Extract contact details from the following CV text. Output strictly JSON with keys: "
-        '"name", "email", "phone", "location", "linkedin", "github". '
-        "If a field is missing, use an empty string."
-    )
-    
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": cv_text[:2000]}
-            ],
-            temperature=0.0,
-            response_format={"type": "json_object"}
-        )
-        data = json.loads(response.choices[0].message.content.strip())
-        return {
-            "name": data.get("name", "tester"),
-            "email": data.get("email", ""),
-            "phone": data.get("phone", ""),
-            "location": data.get("location", ""),
-            "linkedin": data.get("linkedin", ""),
-            "github": data.get("github", "")
-        }
-    except Exception as e:
-        print(f"[!] Metadata extraction fallback: {e}")
-        return {
-            "name": "tester",
-            "email": "test@gmail.com",
-            "phone": "09",
-            "location": "",
-            "linkedin": "https://linkedin.com/in/sat-naing-tun",
-            "github": "https://github.com/SatNaingTun"
-        }
-
-
 def clean_coverletter_prose(text: str) -> str:
-    """Strips remaining preambles, cleans word spacing, and escapes LaTeX special characters."""
+    """Strips remaining preambles, bracketed placeholders, and normalizes spacing."""
     if not text:
         return ""
         
     text = re.sub(r"^```(?:json|latex)?\n?", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\n?```$", "", text).strip()
 
-    # Remove preambles
+    # Strip bracketed template placeholders (e.g., [Insert Company's...])
+    text = re.sub(r"\[\s*(?:Insert|Fill|Company's?)[^\]]*\]", "", text, flags=re.IGNORECASE)
+
     text = re.sub(
         r"^(?:Okay|Sure|Certainly|Here\s+is|Here\'s|Below\s+is|This\s+is)[^:]*:\s*",
         "",
         text,
         flags=re.IGNORECASE,
     )
-
-    # Normalize weird concats & spacing
-    text = re.sub(r"\[\s*.*?\s*\]", "", text)
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"\s+([.,!?;:])", r"\1", text)
-    
-    # Escape special LaTeX characters safely
-    text = text.replace("&", "\\&").replace("%", "\\%").replace("$", "\\$").replace("#", "\\#")
-
     return text.strip()
 
 
-def build_single_page_coverletter_latex(
-    candidate_cv_text: str, job_info: Dict[str, str]
-) -> str:
-    """Generates a fluid 3-paragraph cover letter in a single JSON call for natural flow."""
-    contact = extract_contact_info_from_cv(candidate_cv_text)
+def get_candidate_profile_from_sqlite() -> Dict[str, any]:
+    """Queries candidate metadata and profile data directly from the SQLite database."""
+    db_path = os.path.join(DATA_FOLDER, DB_NAME)
+    if not os.path.exists(db_path):
+        build_sqlite_master_profile(cv_folder=CV_FOLDER)
+    
+    db = SQLiteCRUD(db_path)
+    contact = db.get_contact_info()
+    education = db.get_education()
+    experience = db.get_experience()
+    projects = db.get_projects()
+    db.close()
+    
+    return {
+        "contact": contact,
+        "education": education,
+        "experience": experience,
+        "projects": projects
+    }
 
-    company_str = job_info.get("company_name", "your organization")
-    if company_str.lower() in ["unknown", "n/a", "none", "", "company"]:
-        company_str = "your organization"
 
-    skills_str = ", ".join(job_info.get("required_skills", []))
-    job_title = job_info.get("job_title", "Position")
-
+def generate_tailored_coverletter_paragraphs(job_summary_str: str, profile_data: Dict[str, any]) -> Dict[str, str]:
+    """Extracts factual milestones from the SQLite profile data and writes a strictly accurate 3-paragraph cover letter."""
     system_prompt = (
-        "You are an expert executive cover letter writer. Write a cohesive, natural 3-paragraph cover letter.\n"
+        "You are an expert executive cover letter writer. Write a cohesive, highly tailored 3-paragraph cover letter "
+        "by pulling ONLY factual timeline data and actual experience from the provided candidate database profile against the target job description.\n"
         "STRICT REQUIREMENTS:\n"
-        "1. Write strictly in FIRST-PERSON ('I', 'my'). NEVER use third-person pronouns ('he', 'his') or referring to yourself by name.\n"
-        "2. Ensure fluid, elegant narrative transitions connecting Paragraph 1 -> Paragraph 2 -> Paragraph 3.\n"
-        "3. GROUND TRUTH ONLY: Use real details from CV (e.g. Master of Engineering at Asian Institute of Technology, IT Administrator at Best Oil Company, Research Intern at NII). Never invent fake placeholder company names like XYZ Corp.\n"
-        "4. DO NOT output any LaTeX code, headers, or bullet points in the JSON prose values.\n"
-        "5. Return strictly JSON with keys: 'paragraph_1', 'paragraph_2', 'paragraph_3'."
+        "1. Write strictly in FIRST-PERSON ('I', 'my'). NEVER use third-person pronouns or refer to yourself by name in the text body.\n"
+        "2. ABSOLUTE FACTUAL ACCURACY: Do not mix up job roles, institutions, or projects. Accurately represent your actual background (e.g., specific degree, research at Asian Institute of Technology, work history, and exact technologies used).\n"
+        "3. Paragraph Structure:\n"
+        "   - paragraph_1: State the exact position applied for, express strong interest, and cite your precise academic/professional background including your exact degree.\n"
+        "   - paragraph_2: Detail your direct technical experience and projects from your SQLite profile that align with the job requirements.\n"
+        "   - paragraph_3: Conclude with strong alignment to the company's goals and a clear call to action for an interview.\n"
+        "4. NO PLACEHOLDERS: Never output bracketed placeholders, template instructions, or notes like '[Insert Company...]'[cite: 1]. Write fully complete sentences.\n"
+        "5. Return strictly a JSON object with keys: 'paragraph_1', 'paragraph_2', 'paragraph_3'."
     )
 
-    user_prompt = f"""=== CANDIDATE CV GROUND TRUTH ===
-{candidate_cv_text}
+    user_prompt = f"""=== TARGET JOB SPECIFICATIONS ===
+{job_summary_str}
 
-=== TARGET JOB DETAILS ===
-Position: {job_title}
-Company: {company_str}
-Required Skills: {skills_str}
+=== CANDIDATE PROFILE (SQLITE DATABASE) ===
+{json.dumps(profile_data, indent=2)}
 
-=== STRUCTURE INSTRUCTIONS ===
-- paragraph_1: Warm self-introduction combining my IoT Master's degree at AIT, my enthusiasm for the {job_title} role at {company_str}, and a high-level summary of my background in IT operations and software engineering.
-- paragraph_2: Detail my practical technical accomplishments (e.g., leading IT operations at Best Oil Company, developing C#/.NET tools, and AI network research at NII) and connect them smoothly to {skills_str}.
-- paragraph_3: Smoothly transition from those technical achievements into how my problem-solving ability ensures operational continuity and system reliability for {company_str}, ending with a confident request for an interview.
+INSTRUCTIONS:
+Carefully parse the profile data above to ensure exact factual alignment (retaining your correct degree and technical background). Generate the JSON object containing 'paragraph_1', 'paragraph_2', and 'paragraph_3'.
 """
 
     try:
-        response = client.chat.completions.create(
+        response_completion = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.2,
+            temperature=0.1,
             response_format={"type": "json_object"}
         )
-        data = json.loads(response.choices[0].message.content.strip())
-        p1 = clean_coverletter_prose(data.get("paragraph_1", ""))
-        p2 = clean_coverletter_prose(data.get("paragraph_2", ""))
-        p3 = clean_coverletter_prose(data.get("paragraph_3", ""))
+        data = json.loads(response_completion.choices[0].message.content.strip())
+        return {
+            "paragraph_1": clean_coverletter_prose(data.get("paragraph_1", "")),
+            "paragraph_2": clean_coverletter_prose(data.get("paragraph_2", "")),
+            "paragraph_3": clean_coverletter_prose(data.get("paragraph_3", ""))
+        }
     except Exception as e:
         print(f"[!] Generation error: {e}")
-        p1 = f"I am writing to express my strong interest in the {job_title} position at {company_str}."
-        p2 = "My experience spans IT administration and software engineering, including managing critical systems and conducting network research."
-        p3 = "I look forward to discussing how my experience can support your team."
-
-    contact_line_1 = []
-    if contact.get("email"):
-        contact_line_1.append(
-            f"Email: \\href{{mailto:{contact['email']}}}{{{contact['email']}}}"
-        )
-    if contact.get("phone"):
-        contact_line_1.append(f"Phone: {contact['phone']}")
-
-    contact_line_2 = []
-    if contact.get("linkedin"):
-        clean_li = contact["linkedin"].replace("https://", "").replace("http://", "")
-        contact_line_2.append(f"LinkedIn: \\href{{{contact['linkedin']}}}{{{clean_li}}}")
-    if contact.get("github"):
-        clean_gh = contact["github"].replace("https://", "").replace("http://", "")
-        contact_line_2.append(f"GitHub: \\href{{{contact['github']}}}{{{clean_gh}}}")
-
-    line1_str = " \\,|\\, ".join(contact_line_1)
-    line2_str = " \\,|\\, ".join(contact_line_2)
-
-    header_lines = [f"{{\\Large \\textbf{{{contact['name']}}}}}\\"]
-    if contact.get("location"):
-        header_lines.append(f"{contact['location']} \\\\")
-    if line1_str:
-        header_lines.append(f"{line1_str} \\\\")
-    if line2_str:
-        header_lines.append(f"{line2_str}")
-
-    header_str = "\n".join(header_lines)
-
-    latex_document = f"""\\documentclass[11pt,a4paper]{{article}}
-\\usepackage[utf8]{{inputenc}}
-\\usepackage[margin=0.75in]{{geometry}}
-\\usepackage{{hyperref}}
-\\usepackage{{parskip}}
-
-\\hypersetup{{
-    colorlinks=true,
-    linkcolor=blue,
-    urlcolor=blue
-}}
-
-\\begin{{document}}
-
-\\pagestyle{{empty}}
-
-% Header Block
-{header_str}
-
-\\vspace{{1.2em}}
-
-\\today
-
-\\vspace{{1em}}
-
-Dear Hiring Manager,
-
-\\vspace{{0.5em}}
-
-{p1}
-
-\\vspace{{0.8em}}
-
-{p2}
-
-\\vspace{{0.8em}}
-
-{p3}
-
-\\vspace{{1.5em}}
-
-Sincerely,
-
-\\vspace{{1.5em}}
-
-{contact['name']}
-
-\\end{{document}}
-"""
-    return latex_document
+        return {
+            "paragraph_1": "I am writing to express my strong interest in this position.",
+            "paragraph_2": "My background spans software engineering, system administration, and technical research.",
+            "paragraph_3": "I look forward to discussing how my experience can support your team."
+        }
 
 
 def generate_tailored_coverletter(
     raw_job_input: str,
-    candidate_cv_text: str,
     output_path: str,
     pipeline_pbar: tqdm = None,
 ) -> str:
-    print(f"\n[Step 3] Initializing Cover Letter Generation...")
+    print(f"\n[Step 3] Initializing SQLite Profile Query & Cover Letter Generation...")
 
-    print("[Step 3.1] Extracting structured details from job description...")
-    job_info = get_or_cache_job_description(raw_job_input)
-
-    final_tex = build_single_page_coverletter_latex(candidate_cv_text, job_info)
+    print("[Step 3.1] Querying candidate profile from SQLite...")
+    profile_data = get_candidate_profile_from_sqlite()
+    contact_data = profile_data.get("contact", {})
     if pipeline_pbar:
         pipeline_pbar.update(1)
 
-    print(f"\n[Step 3.2] Saving tailored LaTeX file to: {output_path}")
+    print("[Step 3.2] Extracting and caching job requirements...")
+    job_info = get_or_cache_job_description(raw_job_input)
+    job_summary_str = format_job_summary(job_info) if 'format_job_summary' in globals() else str(job_info)
+    if pipeline_pbar:
+        pipeline_pbar.update(1)
+
+    print("[Step 3.3] Comparing SQLite profile against job description via LLM...")
+    paragraphs = generate_tailored_coverletter_paragraphs(job_summary_str, profile_data)
+    
+    from latex_coverletter_writer import LaTeXCoverLetterWriter
+    name = contact_data.get("name", "Sat Naing Tun")
+    
+    # Retrieve email and format as a clickable LaTeX email link instead of location
+    email = contact_data.get("email", "")
+    email_link = f"\\href{{mailto:{email}}}{{{email}}}" if email else ""
+
+    header_str = LaTeXCoverLetterWriter.extract_header_block(name, contact_data, email_link)
+    
+    final_tex = LaTeXCoverLetterWriter.build_full_document(
+        header_str=header_str,
+        body_1_para=paragraphs["paragraph_1"],
+        body_2_para=paragraphs["paragraph_2"],
+        body_3_para=paragraphs["paragraph_3"],
+        sender_name=name
+    )
+
+    if pipeline_pbar:
+        pipeline_pbar.update(1)
+
+    print(f"\n[Step 3.4] Saving tailored LaTeX cover letter to: {output_path}")
     output_dir = os.path.dirname(output_path)
     os.makedirs(output_dir, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(final_tex)
     print("[✓] LaTeX file written successfully.")
 
-    print(f"\n[Step 3.3] Compiling LaTeX to PDF in output directory: {output_dir}")
+    print(f"\n[Step 3.5] Compiling LaTeX to PDF in output directory: {output_dir}")
     compile_latex_to_pdf(output_path, output_dir)
     print("[✓] PDF Compilation step finished.")
     if pipeline_pbar:
@@ -254,31 +174,14 @@ def generate_tailored_coverletter(
 
 
 if __name__ == "__main__":
-    print("=====================================================================")
-    print("[Step 1] Reading Job Description input from terminal...")
-    print("Enter Job Description (URL, file path, or paste multi-line text).")
-    print("When finished, press Ctrl+D (or Ctrl+Z on Windows):")
-    print("=====================================================================")
-    user_input = sys.stdin.read().strip()
-
-    if not user_input:
-        print("[!] No job description provided. Exiting.")
-        exit(1)
-
+    from utils import prompt_for_job_description, format_job_summary
     with tqdm(
         total=4,
-        desc="Overall Generation Pipeline",
+        desc="Cover Letter Generation Pipeline",
         unit="stage",
         leave=False,
     ) as pipeline_pbar:
-        raw_job_text = get_job_description(user_input)
-        print(f"\n[✓] Extracted {len(raw_job_text)} characters of job description text.")
-        pipeline_pbar.update(1)
-
-        print("\n[Step 2] Locating candidate CV in CV_FOLDER...")
-        candidate_cv_file = select_optimal_cv_file(CV_FOLDER, raw_job_text)
-        candidate_cv_text = extract_text_from_file(candidate_cv_file)
-        print(f"[✓] Extracted {len(candidate_cv_text)} characters from Candidate CV.")
+        raw_input = prompt_for_job_description()
         pipeline_pbar.update(1)
 
         base_filename = (
@@ -289,8 +192,7 @@ if __name__ == "__main__":
         output_tex_file = os.path.join(OUTPUT_FOLDER, f"{base_filename}.tex")
 
         generate_tailored_coverletter(
-            raw_job_text,
-            candidate_cv_text,
+            raw_input,
             output_tex_file,
             pipeline_pbar=pipeline_pbar,
         )
