@@ -290,10 +290,34 @@ class LaTeXReader:
     return bullets
 
   def _clean_latex_syntax(self, text: str) -> str:
-    text = re.sub(r"\\textbf\{([^}]+)\}", r"\1", text)
-    text = re.sub(r"\\href\{[^}]+\}\{([^}]+)\}", r"\1", text)
-    text = re.sub(r"\\[a-zA-Z]+\*?(?:\{[^}]*\})?", "", text)
-    return text.replace("\\%", "%").replace("\\&", "&").replace("\\\\", " ").strip()
+    """Removes macros, LaTeX syntax artifacts, page breaks, and unescapes common symbols."""
+    if not text:
+      return ""
+    
+    # Unescape common LaTeX symbols first
+    text = text.replace(r'\#', '#')
+    text = text.replace(r'\&', '&')
+    text = text.replace(r'\%', '%')
+    text = text.replace(r'\$', '$')
+    text = text.replace(r'\_', '_')
+    text = text.replace(r'\{', '{')
+    text = text.replace(r'\}', '}')
+    text = text.replace(r'\textbackslash', '\\')
+    
+    # Handle text formatting macros explicitly
+    text = re.sub(r'\\textbf\{([^}]+)\}', r'\1', text)
+    text = re.sub(r'\\textit\{([^}]+)\}', r'\1', text)
+    text = re.sub(r'\\href\{[^}]+\}\{([^}]+)\}', r'\1', text)
+    
+    # Explicitly strip layout commands like \newpage or \vspace{...}
+    text = re.sub(r'\\newpage', '', text)
+    text = re.sub(r'\\vspace\*?\{[^}]+\}', '', text)
+    
+    # Safely strip remaining itemize and general LaTeX macros
+    text = re.sub(r'\\item\s*', '', text)
+    text = re.sub(r'\\[a-zA-Z]+\*?(?:\{[^}]*\})?', "", text)
+    
+    return text.strip()
 
   def parse_education(self) -> List[Dict[str, Any]]:
     raw_edu = self.parse_structured_entries("education")
@@ -372,20 +396,18 @@ class LaTeXReader:
     return formatted_experience
   
   def parse_itemize_to_array(self, content: str) -> List[str]:
-    """Reusable helper to extract and clean LaTeX itemize blocks into a Python list array."""
+    """Extracts and cleans LaTeX itemize blocks into a clean Python list array."""
     if not content:
       return []
     
     items = []
-    # Find all individual \item blocks
     item_pattern = re.compile(r"\\item\s+(.*?)(?=\\item|\\end\{itemize\}|$)", re.DOTALL)
     
     for match in item_pattern.findall(content):
-      # Clean LaTeX syntax and remove leftover tags
       cleaned = match.replace('\\begin{itemize}', '').replace('\\end{itemize}', '')
+      # This applies the unescaping rules defined above
       cleaned = self._clean_latex_syntax(cleaned.replace('\n', ' ').strip())
       
-      # Filter out noise or partial tags
       if cleaned and not cleaned.startswith('nd{itemize}') and not cleaned.startswith('\\end'):
         items.append(cleaned)
         
