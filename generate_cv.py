@@ -137,9 +137,9 @@ def query_section_llm(
 
   if "summary" in section_name.lower():
     system_prompt = (
-        "You are an expert executive resume writer and ATS optimization specialist. "
-        "Your task is to craft a compelling professional summary that explicitly connects the candidate's actual background to why they are a strong fit for the target role. "
-        "CRITICAL: Output ONLY the raw tailored text. NEVER include conversational filler or introductions."
+        "You are an expert executive resume writer. Craft a concise, high-impact professional summary "
+        "that connects the candidate's background to the target role. "
+        "CRITICAL: Do NOT repeat the section title (e.g., do not write 'Professional Summary'). Output ONLY the clean summary paragraph text."
     )
     user_prompt = f"""=== TARGET JOB SPECIFICATIONS ===
 {job_summary_str}
@@ -151,15 +151,15 @@ def query_section_llm(
 {section_content}
 
 INSTRUCTIONS:
-1. Rewrite this professional summary to highlight the core strengths, technical skills, and background that directly make the candidate an ideal fit for the target job specifications.
-2. Keep the content strictly rooted in the candidate's actual experience (do not invent jobs or degrees).
-3. Output ONLY the raw content body without any introduction or wrapper.
+1. Write a fluid, professional 3-4 sentence summary tailored to the target role.
+2. Highlight relevant technical competencies (Python, SQL, databases, cloud infrastructure) and practical engineering/research background.
+3. Do not include any introductory labels, headers, or conversational wrappers like 'Professional Summary:'. Return only the paragraph text.
 """
   elif "experience" in section_name.lower():
     system_prompt = (
-        "You are a strict and honest technical resume editor. Your job is to refine experience bullet points "
-        "for clarity and professional tone WITHOUT fabricating new responsibilities, fake metrics, or unowned tools. "
-        "CRITICAL: Output ONLY the raw tailored text. NEVER include conversational filler."
+        "You are an expert technical resume writer. Refine experience bullet points to be concise, action-oriented, "
+        "and naturally aligned with the target job description without sounding robotic or bloated. "
+        "CRITICAL: Output ONLY clean, concise bullet points."
     )
     user_prompt = f"""=== TARGET JOB SPECIFICATIONS ===
 {job_summary_str}
@@ -171,15 +171,14 @@ INSTRUCTIONS:
 {section_content}
 
 INSTRUCTIONS:
-1. Refine these existing experience bullet points to improve clarity, flow, and professional impact.
-2. DO NOT invent or fabricate fake metrics (e.g., "$500k revenue uplift", "99.99% uptime", custom customer churn percentages) unless they are explicitly present in the original content.
-3. Keep the technical stack and duties completely truthful to the original text. Only subtly emphasize elements that relate to the target job.
-4. Output ONLY the raw bullet points without any introduction.
+1. Keep the bullet points concise, punchy, and natural. Limit each role to 4-6 strong bullets maximum.
+2. Reframe past technical work to highlight relevant data handling, system administration, scripting, or engineering tasks that match the target role.
+3. Avoid overly verbose or repetitive phrasing. Keep descriptions grounded and realistic.
+4. Output ONLY the raw bullet points.
 """
   else:
     system_prompt = (
-        "You are an expert professional resume editor. "
-        "CRITICAL: Output ONLY the raw tailored text. NEVER include conversational filler or introductions."
+        "You are an expert professional resume editor. Tailor this section to reflect the priorities of the target job description cleanly and professionally."
     )
     user_prompt = f"""=== TARGET JOB SPECIFICATIONS ===
 {job_summary_str}
@@ -191,9 +190,8 @@ INSTRUCTIONS:
 {section_content}
 
 INSTRUCTIONS:
-1. Tailor this section to highlight skills and focus areas matching the target job specifications.
-2. Keep all facts strictly truthful to the original content.
-3. Output ONLY the raw content body without any introduction.
+1. Tailor the content to match the target job's focus areas while keeping all facts strictly truthful.
+2. Output ONLY the raw content body without any introductions.
 """
 
   try:
@@ -203,8 +201,8 @@ INSTRUCTIONS:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.3,  # Lowered temperature slightly to keep experience grounded and realistic
-        max_tokens=1500,
+        temperature=0.3,  # Lower temperature prevents erratic, overly verbose generation
+        max_tokens=1000,
     )
     raw_output = response.choices[0].message.content.strip()
     return clean_llm_response(raw_output)
