@@ -71,7 +71,7 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
       return None
 
     candidate_name = reader.parse_candidate_name()
-    contact_info = reader.parse_contact_info()
+    contact_info = reader.parse_contact_info()  # Returns JSON/dict containing email, phone, linkedin, github
     summaries = reader.parse_summary()
 
     tech_skills_dict = {}
@@ -81,46 +81,32 @@ def _parse_tex_natively(filepath: str, raw_text: str) -> Optional[Dict[str, Any]
         items = skill_group.get("bullet_points", [])
         tech_skills_dict[category] = items
 
-    # formatted_experience = []
-    # for exp in experience:
-    #   if isinstance(exp, dict):
-    #     formatted_experience.append({
-    #         "job_title": exp.get("title", ""),
-    #         "company": exp.get("metadata", ""),
-    #         "from": exp.get("from", ""),
-    #         "to": exp.get("to", ""),
-    #         "bullet_points": exp.get("bullet_points", [])
-    #     })
-
-    
     certifications = reader.parse_certificates()
     abs_path = os.path.abspath(filepath)
     filename = os.path.basename(filepath)
 
-    return {
+    result_dict = {
         "candidate_name": candidate_name,
         "target_role": "",
-        "contact_info": contact_info,
         "summaries": summaries,
         "technical_skills": tech_skills_dict,
-        "core_competencies": core_competencies,  # Added core competencies
+        "core_competencies": core_competencies,
         "work_experience": experience,
         "education": education,
         "projects": projects,
         "certifications": certifications,
-        "languages": languages,                   # Added languages list
+        "languages": languages,
         "file_path": abs_path,
         "source_file": filename,
-        # "latex_granular": {
-        #     "education_structured": education,
-        #     "experience_structured": experience,
-        #     "projects_structured": projects,
-        #     "skills_structured": skills,
-        #     "core_competencies": core_competencies,
-        #     "languages": languages,
-        #     "sections": reader.sections
-        # }
     }
+
+    # Flatten contact info keys into the dictionary for SQLite storage
+    if isinstance(contact_info, dict):
+      result_dict.update(contact_info)
+    else:
+      result_dict["email"] = str(contact_info)
+
+    return result_dict
   except Exception:
     return None
 
@@ -140,7 +126,10 @@ Preserve all rich details, full bullet points, exact dates, institutions, degree
 {{
   "candidate_name": "Full Candidate Name",
   "target_role": "Target Role or Job Title",
-  "contact_info": "Email | Phone | LinkedIn | GitHub",
+  "email": "email@example.com",
+  "phone": "Phone number",
+  "linkedin": "linkedin.com/in/...",
+  "github": "github.com/...",
   "summaries": ["Professional summary text"],
   "technical_skills": {{
     "Category Name": ["Skill 1", "Skill 2"]
@@ -337,9 +326,11 @@ def build_sqlite_master_profile(
 
       db.upsert_scanned_file(rel_path, abs_path, mtime, formatted_date)
 
-      sections = ["summary", "education", "experience", "project", "certificate", "language", "skills", "core_competencies"]
+      sections = ["contact_info", "summary", "education", "experience", "project", "certificate", "language", "skills", "core_competencies"]
       for section in tqdm(sections, desc="   -> Inserting sections", leave=False):
-        if section == "summary":
+        if section == "contact_info":
+          db.store_contact_info(parsed_data)
+        elif section == "summary":
           db.store_summary_section(parsed_data, rel_path)
         elif section == "education":
           db.store_education_section(parsed_data)

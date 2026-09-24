@@ -54,24 +54,38 @@ class LaTeXReader:
       return self._clean_latex_syntax(name_match.group(1))
     return ""
 
-  def parse_contact_info(self) -> str:
+  def parse_contact_info(self) -> Dict[str, Any]:
+    """Parses header contact details and returns them structured as JSON/dictionary."""
     header_block = self.raw_text[:2000]
-    contacts = []
-
+    
+    # Email
     email_match = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", header_block)
-    if email_match:
-      contacts.append(email_match.group(0))
+    email = email_match.group(0) if email_match else ""
 
+    # Phone
     phone_match = re.search(r"(\+?[0-9\-\s\(\)]{7,15})", header_block)
-    if phone_match:
-      contacts.append(phone_match.group(0).strip())
+    phone = phone_match.group(0).strip() if phone_match else ""
 
+    # LinkedIn
     linkedin_match = re.search(r"(?:linkedin\.com/in/[^\s}]+|\\href\{([^}]+linkedin[^\}]+)\})", header_block, re.IGNORECASE)
+    linkedin = ""
     if linkedin_match:
       url = linkedin_match.group(1) if linkedin_match.lastindex else linkedin_match.group(0)
-      contacts.append(self._clean_latex_syntax(url))
+      linkedin = self._clean_latex_syntax(url)
 
-    return " | ".join(contacts)
+    # GitHub
+    github_match = re.search(r"(?:github\.com/[^\s}]+|\\href\{([^}]+github[^\}]+)\})", header_block, re.IGNORECASE)
+    github = ""
+    if github_match:
+      url = github_match.group(1) if github_match.lastindex else github_match.group(0)
+      github = self._clean_latex_syntax(url)
+
+    return {
+        "email": email,
+        "phone": phone,
+        "linkedin": linkedin,
+        "github": github
+    }
 
   def parse_summary(self) -> List[str]:
     """Extracts summary text while filtering out comments and LaTeX artifacts."""

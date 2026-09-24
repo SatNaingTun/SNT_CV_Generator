@@ -7,7 +7,7 @@ class SQLiteCRUD:
   """Encapsulates SQLite database operations for CV profile management,
 
   supporting section-specific inserts for summary, education, experience, projects, 
-  certificates, languages, and technical skills / core competencies.
+  certificates, languages, technical skills, core competencies, and contact info.
   """
 
   def __init__(self, db_path: str):
@@ -31,6 +31,16 @@ class SQLiteCRUD:
             modified_date TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS contact_info (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_name TEXT,
+            email TEXT UNIQUE,
+            phone TEXT,
+            linkedin TEXT,
+            github TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE TABLE IF NOT EXISTS education (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             candidate_name TEXT,
@@ -40,7 +50,7 @@ class SQLiteCRUD:
             "to" TEXT,
             coursework TEXT,
             thesis TEXT,
-            UNIQUE(candidate_name, degree, institution, "from", "to")
+            UNIQUE(candidate_name, institution, "from")
         );
 
         CREATE TABLE IF NOT EXISTS experience (
@@ -51,7 +61,7 @@ class SQLiteCRUD:
             "from" TEXT,
             "to" TEXT,
             details TEXT,
-            UNIQUE(candidate_name, job_title, company, "from", "to")
+            UNIQUE(candidate_name, company, "from")
         );
 
         CREATE TABLE IF NOT EXISTS summary_and_job (
@@ -138,6 +148,31 @@ class SQLiteCRUD:
     row = cursor.fetchone()
     return row[0] if row else None
 
+  def store_contact_info(self, parsed_data: Dict[str, Any]):
+    """Stores or updates contact information in SQLite, avoiding duplicate rows by email."""
+    cursor = self.conn.cursor()
+    candidate_name = parsed_data.get("candidate_name", "").strip()
+    email = parsed_data.get("email", "").strip()
+    phone = parsed_data.get("phone", "").strip()
+    linkedin = parsed_data.get("linkedin", "").strip()
+    github = parsed_data.get("github", "").strip()
+
+    if email or candidate_name:
+      cursor.execute(
+          """
+          INSERT INTO contact_info (candidate_name, email, phone, linkedin, github)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(email) DO UPDATE SET
+              candidate_name=excluded.candidate_name,
+              phone=excluded.phone,
+              linkedin=excluded.linkedin,
+              github=excluded.github,
+              updated_at=CURRENT_TIMESTAMP
+      """,
+          (candidate_name, email, phone, linkedin, github),
+      )
+      self.conn.commit()
+
   def store_summary_section(self, parsed_data: Dict[str, Any], source_file: str):
     cursor = self.conn.cursor()
     candidate_name = parsed_data.get("candidate_name", "").strip()
@@ -159,50 +194,24 @@ class SQLiteCRUD:
       )
       self.conn.commit()
 
-  def store_education_section(self, parsed_data: Dict[str, Any]):
-    cursor = self.conn.cursor()
-    candidate_name = parsed_data.get("candidate_name", "").strip()
-    for edu in parsed_data.get("education", []):
-      degree = edu.get("degree", "").strip()
-      institution = edu.get("institution", "").strip()
-      from_date = (edu.get("from", "") or edu.get("from_date", "") or edu.get("dates", "")).strip()
-      to_date = edu.get("to", "").strip()
-      import json
-      coursework = json.dumps(edu.get("coursework", []))
-      thesis = edu.get("thesis", "").strip()
-      if degree or institution:
-        cursor.execute(
-            """
-            INSERT INTO education (candidate_name, degree, institution, "from", "to", coursework, thesis)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(candidate_name, degree, institution, "from", "to") DO UPDATE SET
-                coursework=excluded.coursework,
-                thesis=excluded.thesis
-        """,
-            (candidate_name, degree, institution, from_date, to_date, coursework, thesis),
-        )
-    self.conn.commit()
+  
 
   def store_projects_section(self, parsed_data: Dict[str, Any]):
-    """Stores or updates the parsed projects section in the SQLite database."""
     cursor = self.conn.cursor()
     candidate_name = parsed_data.get("candidate_name", "").strip()
     
     for proj in parsed_data.get("projects", []):
       if isinstance(proj, dict):
         project_name = proj.get("project_name", "").strip()
-        
-        # Handle tech stack
         tech_stack = proj.get("tech_stack", "")
         if isinstance(tech_stack, list):
           import json
           tech_stack = json.dumps(tech_stack)
           
-        # Handle details array (serialize list to JSON or newline string)
         details = proj.get("details", "")
         if isinstance(details, list):
           import json
-          details = json.dumps(details)  # Stores the Python array as JSON in SQLite
+          details = json.dumps(details)
 
         if project_name:
           cursor.execute(
@@ -271,7 +280,6 @@ class SQLiteCRUD:
     self.conn.commit()
 
   def store_core_competencies_section(self, parsed_data: Dict[str, Any], source_file: str):
-    """Stores core competencies in a dedicated table, completely separate from technical skills."""
     cursor = self.conn.cursor()
     candidate_name = parsed_data.get("candidate_name", "").strip()
     target_role = parsed_data.get("target_role", "").strip() or candidate_name
@@ -316,6 +324,7 @@ class SQLiteCRUD:
     cursor = self.conn.cursor()
     for tbl in [
         "scanned_files",
+        "contact_info",
         "education",
         "experience",
         "summary_and_job",
@@ -326,6 +335,43 @@ class SQLiteCRUD:
         "core_competencies",
     ]:
       cursor.execute(f"DELETE FROM {tbl}")
+    self.conn.commit()
+
+  def store_education_section(self, parsed_data: Dict[str, Any]):
+    cursor = self.conn.cursor()
+    candidate_name = parsed_data.get("candidate_name", "").strip()
+    for edu in parsed_data.get("education", []):
+      degree = edu.get("degree", "").strip()
+      institution = edu.get("institution", "").strip()
+      from_date = (edu.get("from", "") or edu.get("from_date", "") or edu.get("dates", "")).strip()
+      to_date = edu.get("to", "").strip()
+      import json
+      coursework = json.dumps(edu.get("coursework", []))
+      thesis = edu.get("thesis", "").strip()
+      
+      if degree or institution:
+        cursor.execute(
+            """
+            INSERT INTO education (candidate_name, degree, institution, [from], [to], coursework, thesis)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(candidate_name, institution, [from]) DO UPDATE SET
+                degree = COALESCE(NULLIF(excluded.degree, ''), education.degree),
+                [to] = CASE 
+                    WHEN education.[to] LIKE '%Present%' THEN education.[to]
+                    WHEN excluded.[to] IS NULL OR excluded.[to] = '' THEN education.[to]
+                    ELSE excluded.[to] 
+                END,
+                coursework = CASE 
+                    WHEN excluded.coursework IS NULL OR excluded.coursework = '[]' OR excluded.coursework = '' THEN education.coursework
+                    ELSE excluded.coursework 
+                END,
+                thesis = CASE 
+                    WHEN excluded.thesis IS NULL OR excluded.thesis = '' THEN education.thesis
+                    ELSE excluded.thesis 
+                END
+        """,
+            (candidate_name, degree, institution, from_date, to_date, coursework, thesis),
+        )
     self.conn.commit()
 
   def store_experience_section(self, parsed_data: Dict[str, Any]):
@@ -344,10 +390,19 @@ class SQLiteCRUD:
       if job_title or company:
         cursor.execute(
             """
-            INSERT INTO experience (candidate_name, job_title, company, "from", "to", details)
+            INSERT INTO experience (candidate_name, job_title, company, [from], [to], details)
             VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(candidate_name, job_title, company, "from", "to") DO UPDATE SET
-                details=excluded.details
+            ON CONFLICT(candidate_name, company, [from]) DO UPDATE SET
+                job_title = COALESCE(NULLIF(excluded.job_title, ''), experience.job_title),
+                [to] = CASE 
+                    WHEN experience.[to] LIKE '%Present%' THEN experience.[to]
+                    WHEN excluded.[to] IS NULL OR excluded.[to] = '' THEN experience.[to]
+                    ELSE excluded.[to] 
+                END,
+                details = CASE 
+                    WHEN excluded.details IS NULL OR excluded.details = '[]' OR excluded.details = '' THEN experience.details
+                    ELSE excluded.details 
+                END
         """,
             (candidate_name, job_title, company, from_date, to_date, details_text),
         )
