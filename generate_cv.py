@@ -24,10 +24,21 @@ def split_into_sentences(text: str) -> list:
 
 
 def clean_llm_response(text: str) -> str:
-  """Strips conversational boilerplate prefixes from LLM outputs."""
+  """Strips conversational boilerplate prefixes and artifact bullet strings from LLM outputs."""
   if not text:
     return ""
-  cleaned = re.sub(r"^(Here(?:'s| is) (?:a|the|some)?\s*(?:tailored)?\s*(?:professional)?\s*(?:summary|text|content|body content).*?[:\n])", "", text, flags=re.IGNORECASE)
+  
+  # Remove common conversational prefixes/intros
+  cleaned = re.sub(
+      r"^(Here(?:'s| is) (?:a|the|some)?\s*(?:tailored)?\s*(?:professional)?\s*(?:summary|text|content|body content|experience bullet points).*?[:\n])", 
+      "", 
+      text, 
+      flags=re.IGNORECASE | re.MULTILINE
+  )
+  
+  # Clean up any stray literal bullet artifacts left at the start of lines
+  cleaned = re.sub(r"^[\s•*-]+\s*", "", cleaned, flags=re.MULTILINE)
+  
   return cleaned.strip()
 
 
