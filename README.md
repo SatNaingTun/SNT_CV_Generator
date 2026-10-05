@@ -96,3 +96,20 @@ python generate_cv.py
 
 ```
 Paste the target job description text, local text file path, or job posting URL, then press [ENTER] followed by [Ctrl+D] (or enter an empty line) to start the tailoring process.
+
+
+
+## Installation via pip
+
+Install the package via pip:
+
+
+```
+pip install SNT_CV_Generator
+```
+
+
+
+[![PyPI version](https://img.shields.io/pypi/v/SNT_CV_Generator.svg)](https://pypi.org/project/SNT_CV_Generator/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/SNT_CV_Generator.svg)](https://pypi.org/project/SNT_CV_Generator/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
