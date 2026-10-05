@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "SNT_CV_Generator"  # Replace with your desired PyPI package name
+version = "0.1.0"
+description = "An automated CV and cover letter generator powered by LLMs and LaTeX."
+readme = "README.md"
+authors = [
+    { name = "Sat Naing Tun" }
+]
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.8"
+dependencies = [
+    # Move your requirements from requirements.txt here, e.g.:
+    # "requests>=2.25.0",
+    # "jinja2>=3.0.0",
+]
+
+[project.scripts]
+# This lets users run your main script directly from the terminal after pip install
+generate-cv = "cv_generator.main:main" 
+
+[tool.setuptools.packages.find]
+include = ["cv_generator*"]
